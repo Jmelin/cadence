@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cadence Admin</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f8fafc;
+        --text: #0f172a;
+        --muted: #475569;
+        --card-bg: #ffffff;
+        --border: #dbe2ea;
+        --danger: #b91c1c;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0b1220;
+          --text: #e2e8f0;
+          --muted: #94a3b8;
+          --card-bg: #111827;
+          --border: #334155;
+          --danger: #ef4444;
+        }
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        margin: 2rem auto;
+        max-width: 860px;
+        padding: 0 1rem;
+        line-height: 1.4;
+        background: var(--bg);
+        color: var(--text);
+      }
+      .card {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--card-bg);
+        padding: 1rem;
+        margin-bottom: 1rem;
+      }
+      .stack {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .danger {
+        background: var(--danger);
+        color: #fff;
+        border: 1px solid var(--danger);
+      }
+      button {
+        padding: 0.45rem 0.75rem;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        cursor: pointer;
+      }
+      select {
+        padding: 0.45rem;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.5rem;
+        border-bottom: 1px solid var(--border);
+      }
+      .meta {
+        color: var(--muted);
+      }
+      code {
+        background: color-mix(in oklab, var(--card-bg), var(--text) 7%);
+        padding: 0.1rem 0.3rem;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Cadence Admin</h1>
+    <p class="meta">Hidden URL slug: <code>{{ admin_slug }}</code></p>
+
+    <section class="card">
+      <h2>Backup and Restore</h2>
+      <div class="stack">
+        <form action="{{ url_for('admin_wipe', slug=admin_slug) }}" method="post">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" />
+          <button
+            class="danger"
+            type="submit"
+            onclick="return confirm('This will backup, wipe all data, and keep only the General group. Continue?')"
+          >
+            Full wipe (creates backup first)
+          </button>
+        </form>
+        <form class="stack" action="{{ url_for('admin_restore', slug=admin_slug) }}" method="post">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" />
+          <select name="backup_file" required>
+            <option value="" disabled selected>Select backup file</option>
+            {% for backup in backups %}
+            <option value="{{ backup }}">{{ backup }}</option>
+            {% endfor %}
+          </select>
+          <button
+            type="submit"
+            onclick="return confirm('This will replace current data with the selected backup. Continue?')"
+          >
+            Restore selected backup
+          </button>
+        </form>
+      </div>
+      {% if not backups %}
+      <p class="meta">No backups yet. Running a full wipe creates one automatically.</p>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <h2>Delete Individual Tasks</h2>
+      {% if tasks %}
+      <table>
+        <thead>
+          <tr>
+            <th>Task</th>
+            <th>Group</th>
+            <th>Last completed</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for task in tasks %}
+          <tr>
+            <td>{{ task['name'] }}</td>
+            <td>{{ task['group_name'] }}</td>
+            <td>{{ task['last_completed_display'] }}</td>
+            <td>
+              <form action="{{ url_for('admin_delete_task', slug=admin_slug, task_id=task['id']) }}" method="post">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" />
+                <button
+                  class="danger"
+                  type="submit"
+                  onclick="return confirm('Delete this task and all completion history?')"
+                >
+                  Delete
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="meta">No tasks to delete.</p>
+      {% endif %}
+    </section>
+  </body>
+</html>

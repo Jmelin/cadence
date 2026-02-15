@@ -1,0 +1,19 @@
+services:
+  cadence:
+    build:
+      context: .
+    container_name: cadence
+    ports:
+      - "5000:5000"
+    environment:
+      ADMIN_SLUG: ${ADMIN_SLUG:?set ADMIN_SLUG}
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      DATABASE_PATH: /data/tasks.db
+      BACKUP_DIR: /data/backups
+    volumes:
+      - cadence_data:/data
+    restart: unless-stopped
+
+volumes:
+  cadence_data:
