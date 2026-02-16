@@ -6,6 +6,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from flask import Flask, abort, g, redirect, render_template, request, session, url_for
 
@@ -36,11 +37,25 @@ def load_env_file(path: Path) -> None:
 
 load_env_file(BASE_DIR / ".env")
 
+
+def resolve_display_timezone(value: str):
+    timezone_name = value.strip() if value else ""
+    if not timezone_name:
+        timezone_name = "UTC"
+    try:
+        return ZoneInfo(timezone_name), timezone_name
+    except ZoneInfoNotFoundError:
+        return timezone.utc, "UTC"
+
+
 app = Flask(__name__)
 app.config["DATABASE"] = os.getenv("DATABASE_PATH", str(DB_PATH))
 app.config["ADMIN_SLUG"] = os.getenv("ADMIN_SLUG", "").strip() or None
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY") or secrets.token_hex(32)
 app.config["MAX_NAME_LENGTH"] = int(os.getenv("MAX_NAME_LENGTH", "120"))
+display_timezone, timezone_name = resolve_display_timezone(os.getenv("USER_TIMEZONE", "UTC"))
+app.config["DISPLAY_TIMEZONE"] = display_timezone
+app.config["USER_TIMEZONE"] = timezone_name
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = (
@@ -58,7 +73,7 @@ def format_local_datetime(timestamp: Optional[str]) -> str:
     completed_at = parse_iso_utc(timestamp)
     if not completed_at:
         return "Never"
-    local_time = completed_at.astimezone()
+    local_time = completed_at.astimezone(app.config["DISPLAY_TIMEZONE"])
     return local_time.strftime("%b %d, %Y at %I:%M %p").replace(" 0", " ")
 
 
