@@ -8,6 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN addgroup -S app && adduser -S -G app app
+RUN apk add --no-cache tzdata
 
 COPY requirements.txt ./
 RUN pip install --no-compile -r requirements.txt

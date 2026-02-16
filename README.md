@@ -160,6 +160,9 @@ Available admin actions:
 
 - `docker compose` fails with `set ADMIN_SLUG` or `set SECRET_KEY`:
   - Ensure `.env` exists (`cp .env.example .env`) and contains both values.
+- Timezone still shows as UTC in Docker:
+  - Ensure `USER_TIMEZONE` is set in `.env` with an IANA value (for example `America/New_York`).
+  - Rebuild after changing timezone config: `docker compose up --build -d`.
 - Admin page returns `404`:
   - Ensure `ADMIN_SLUG` is set and URL slug matches exactly.
 - Data appears reset after container restart:
