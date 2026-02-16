@@ -43,6 +43,7 @@ Then edit `.env` and set at least:
 
 - `ADMIN_SLUG` (long random slug)
 - `SECRET_KEY` (recommended: 64 hex chars)
+- `USER_TIMEZONE` (IANA timezone like `America/New_York` or `UTC`)
 
 Generate a strong `SECRET_KEY` if needed:
 
@@ -71,7 +72,7 @@ Create and configure your env file:
 cp .env.example .env
 ```
 
-Then update `ADMIN_SLUG` and `SECRET_KEY` in `.env`.
+Then update `ADMIN_SLUG`, `SECRET_KEY`, and `USER_TIMEZONE` in `.env`.
 
 Start:
 
@@ -101,6 +102,7 @@ Environment variables used by the app:
 | --- | --- | --- |
 | `ADMIN_SLUG` | unset | Secret slug for admin route (`/admin/<slug>`). If unset, admin route is disabled (404). |
 | `SECRET_KEY` | random at process start | Flask session and CSRF signing key. Set this explicitly in real deployments. |
+| `USER_TIMEZONE` | `UTC` | Timezone used for displayed completion times (IANA format, e.g. `America/Chicago`). Invalid values fall back to `UTC`. |
 | `DATABASE_PATH` | `./tasks.db` | SQLite database file path. |
 | `BACKUP_DIR` | `./backups` | Directory for JSON backups. |
 | `MAX_NAME_LENGTH` | `120` | Maximum length for group/task names. |
