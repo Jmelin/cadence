@@ -1,5 +1,8 @@
 *
 !app.py
+!reminder_worker.py
 !requirements.txt
+!static/
+!static/**
 !templates/
 !templates/**
