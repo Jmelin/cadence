@@ -160,5 +160,37 @@
       <p class="meta">No tasks to delete.</p>
       {% endif %}
     </section>
+
+    <section class="card">
+      <h2>Reminder Delivery Status</h2>
+      {% if reminder_deliveries %}
+      <table>
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Task</th>
+            <th>Status</th>
+            <th>Attempts</th>
+            <th>Last attempt</th>
+            <th>Details</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for delivery in reminder_deliveries %}
+          <tr>
+            <td>{{ delivery['reminder_type'] }}</td>
+            <td>{{ delivery['task_name'] or 'Daily digest' }}</td>
+            <td>{{ delivery['status'] }}</td>
+            <td>{{ delivery['attempt_count'] }}</td>
+            <td>{{ delivery['attempted_at'] }}</td>
+            <td>{{ delivery['error_message'] or delivery['sent_at'] or '-' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="meta">No reminder deliveries yet.</p>
+      {% endif %}
+    </section>
   </body>
 </html>

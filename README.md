@@ -108,6 +108,38 @@ Environment variables used by the app:
 | `MAX_NAME_LENGTH` | `120` | Maximum length for group/task names. |
 | `SESSION_COOKIE_SECURE` | `false` | Set to `true` when serving over HTTPS. |
 | `FLASK_DEBUG` | `false` | Enables Flask debug mode when running `python app.py`. |
+| `PUBLIC_BASE_URL` | unset | Public HTTPS URL used in reminder email action links. Required for reminders. |
+| `SMTP_HOST` | unset | SMTP server hostname. Required for reminders. |
+| `SMTP_PORT` | `587` | SMTP server port. |
+| `SMTP_USERNAME` | unset | Optional SMTP authentication username. |
+| `SMTP_PASSWORD` | unset | SMTP authentication password when a username is configured. |
+| `SMTP_FROM` | unset | Sender address shown in reminders. Required for reminders. |
+| `SMTP_USE_TLS` | `true` | Starts TLS before SMTP authentication and sending. |
+| `REMINDER_RECIPIENT` | unset | Recipient address for reminders. Required for reminders. |
+| `REMINDER_DIGEST_HOUR` | `8` | Local hour (0-23) for the daily digest. |
+| `EMAIL_ACTION_SECRET` | unset | Distinct secret used to authenticate expiring email action links. Required for reminders. |
+| `EMAIL_ACTION_TTL_HOURS` | `72` | Number of hours an email completion link remains valid. |
+| `REMINDER_WORKER_INTERVAL_SECONDS` | `60` | How often the separate reminder worker checks for work. |
+| `REMINDER_MAX_ATTEMPTS` | `3` | Maximum attempts for an individual or digest delivery. |
+| `REMINDER_RETRY_DELAY_MINUTES` | `15` | Delay before retrying a failed or stale pending delivery. |
+| `DEFAULT_DUE_SOON_LEAD_DAYS` | `0` | Global due-soon lead window; `0` retains automatic proportional timing. |
+
+## Email reminders
+
+The Compose setup runs a separate `reminder-worker` service against the same SQLite
+volume as the web app. It remains disabled until all required reminder configuration
+is present: `PUBLIC_BASE_URL`, `SMTP_HOST`, `SMTP_FROM`, `REMINDER_RECIPIENT`, and
+`EMAIL_ACTION_SECRET`.
+
+For each enabled, unpaused overdue task, the worker sends one individual reminder per
+expected due timestamp. After the configured local digest hour, it sends one daily
+digest containing all enabled tasks that are due soon or overdue. Delivery records
+prevent duplicate sends across worker runs.
+Failed or stale pending deliveries retry after the configured delay until the maximum
+attempt count is reached; each attempt and failure remains visible in the admin panel.
+
+Email links open a confirmation page. Only the CSRF-protected confirmation `POST`
+marks a task complete; links are HMAC-authenticated, expire, and cannot be reused.
 
 ## Data storage
 
