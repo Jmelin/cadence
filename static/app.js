@@ -111,7 +111,13 @@ function taskCard(task) {
   complete.className = "primary";
   complete.type = "submit";
   complete.textContent = "Complete";
-  completeForm.append(hiddenToken(), complete);
+  const note = document.createElement("input");
+  note.type = "text";
+  note.name = "note";
+  note.maxLength = 500;
+  note.placeholder = "Completion note (optional)";
+  note.setAttribute("aria-label", `Completion note for ${task.name}`);
+  completeForm.append(hiddenToken(), note, complete);
   const moveForm = document.createElement("form");
   moveForm.method = "post";
   moveForm.action = `/tasks/${task.id}/move`;
@@ -134,6 +140,12 @@ function taskCard(task) {
     for (const entry of task.completion_history) {
       const item = document.createElement("li");
       item.textContent = entry.display + (entry.days_since_previous === null ? "" : ` (${entry.days_since_previous} days since previous)`);
+      if (entry.note) {
+        const note = document.createElement("div");
+        note.className = "completion-note";
+        note.textContent = entry.note;
+        item.append(note);
+      }
       list.append(item);
     }
     history.append(list);

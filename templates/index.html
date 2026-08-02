@@ -93,10 +93,13 @@
       .cadence.due_soon { color: var(--warning); font-weight: 700; }
       .task-actions { display: flex; gap: 0.45rem; align-items: center; margin-top: 0.9rem; }
       .task-actions form { margin: 0; }
+      .task-actions form[data-async-action="complete"] { display: flex; gap: 0.45rem; }
+      .task-actions form[data-async-action="complete"] input { width: 12rem; padding: 0.55rem; font-size: 0.86rem; }
       .task-actions select { max-width: 9.5rem; padding: 0.55rem; font-size: 0.86rem; }
       details { margin-top: 0.65rem; }
       summary { color: var(--muted); cursor: pointer; font-size: 0.88rem; }
       .history-list { margin: 0.5rem 0 0; padding-left: 1.1rem; color: var(--muted); font-size: 0.84rem; }
+      .completion-note { margin-top: 0.2rem; color: var(--text); white-space: pre-wrap; }
       .settings-form { display: grid; gap: 0.6rem; margin-top: 0.7rem; padding: 0.75rem; background: var(--surface-muted); border-radius: 8px; }
       .settings-form label { display: grid; gap: 0.25rem; font-size: 0.84rem; color: var(--muted); }
       .settings-form label.checkbox { display: flex; align-items: center; gap: 0.45rem; color: var(--text); }
@@ -221,10 +224,10 @@
               <div class="task-top"><div><h3>{{ task['name'] }}</h3><div class="task-subtitle">Last completed: {{ task['last_completed_display'] }}</div></div></div>
               {% if task['cadence']['message'] %}<p class="cadence {% if task['cadence']['status'] %}{{ task['cadence']['status'] }}{% endif %}">{{ task['cadence']['message'] }}</p>{% endif %}
               <div class="task-actions">
-                <form action="{{ url_for('complete_task', task_id=task['id']) }}" method="post" data-async-action="complete"><input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" /><button class="primary" type="submit">Complete</button></form>
+                <form action="{{ url_for('complete_task', task_id=task['id']) }}" method="post" data-async-action="complete"><input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" /><input type="text" name="note" maxlength="500" placeholder="Completion note (optional)" aria-label="Completion note for {{ task['name'] }}" /><button class="primary" type="submit">Complete</button></form>
                 <form action="{{ url_for('move_task', task_id=task['id']) }}" method="post" data-async-action="move"><input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" /><select name="group_id" aria-label="Move {{ task['name'] }}">{% for group in groups %}<option value="{{ group['id'] }}" {% if group['id'] == task['group_id'] %}selected{% endif %}>{{ group['name'] }}</option>{% endfor %}</select></form>
               </div>
-              <details><summary>History ({{ task['completion_count'] }})</summary>{% if task['completion_history'] %}<ul class="history-list">{% for entry in task['completion_history'] %}<li>{{ entry['display'] }}{% if entry['days_since_previous'] is not none %} ({{ entry['days_since_previous'] }} days since previous){% endif %}</li>{% endfor %}</ul>{% else %}<p class="meta">No completion history yet.</p>{% endif %}</details>
+              <details><summary>History ({{ task['completion_count'] }})</summary>{% if task['completion_history'] %}<ul class="history-list">{% for entry in task['completion_history'] %}<li>{{ entry['display'] }}{% if entry['days_since_previous'] is not none %} ({{ entry['days_since_previous'] }} days since previous){% endif %}{% if entry['note'] %}<div class="completion-note">{{ entry['note'] }}</div>{% endif %}</li>{% endfor %}</ul>{% else %}<p class="meta">No completion history yet.</p>{% endif %}</details>
               <details class="task-settings"><summary>Cadence settings</summary><form class="settings-form" action="{{ url_for('update_task_settings', task_id=task['id']) }}" method="post" data-async-action="settings"><input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" /><label>Manual cadence, days<input type="number" name="manual_interval_days" min="0.1" max="3650" step="0.1" value="{% if task['manual_interval_days'] is not none %}{{ task['manual_interval_days'] }}{% endif %}" /></label><label>Due-soon lead, days<input type="number" name="due_soon_lead_days" min="1" max="365" value="{% if task['due_soon_lead_days'] is not none %}{{ task['due_soon_lead_days'] }}{% endif %}" /></label><label class="checkbox"><input type="checkbox" name="is_paused" value="1" {% if task['is_paused'] %}checked{% endif %} />Pause task</label><label class="checkbox"><input type="checkbox" name="reminders_enabled" value="1" {% if task['reminders_enabled'] %}checked{% endif %} />Enable reminder emails</label><button type="submit">Save settings</button></form></details>
             </li>
             {% endfor %}

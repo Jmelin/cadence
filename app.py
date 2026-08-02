@@ -22,6 +22,7 @@ BACKUP_DIR = Path(os.getenv("BACKUP_DIR", str(BASE_DIR / "backups")))
 MIN_COMPLETIONS_FOR_CADENCE = 3
 MAX_CADENCE_INTERVAL_DAYS = 3650
 MAX_DUE_SOON_LEAD_DAYS = 365
+MAX_COMPLETION_NOTE_LENGTH = 500
 
 
 def load_env_file(path: Path) -> None:
@@ -217,18 +218,32 @@ def cadence_insight(
     return insight
 
 
-def enrich_task(
-    task: dict, history: list[str], now: Optional[datetime] = None
-) -> dict:
+def completion_timestamp(completion) -> str:
+    return completion["completed_at"] if isinstance(completion, (dict, sqlite3.Row)) else completion
+
+
+def completion_note(completion) -> Optional[str]:
+    if isinstance(completion, (dict, sqlite3.Row)):
+        return completion["note"]
+    return None
+
+
+def enrich_task(task: dict, history: list, now: Optional[datetime] = None) -> dict:
+    timestamps = [completion_timestamp(completion) for completion in history]
     task["last_completed_display"] = format_local_datetime(task["last_completed_at"])
     task["completed_ago"] = completed_ago(task["last_completed_at"])
     task["completion_count"] = len(history)
     history_entries = []
     for index, item in enumerate(history):
-        entry = {"display": format_local_datetime(item), "days_since_previous": None}
+        timestamp = completion_timestamp(item)
+        entry = {
+            "display": format_local_datetime(timestamp),
+            "days_since_previous": None,
+            "note": completion_note(item),
+        }
         if index < len(history) - 1:
-            current = parse_iso_utc(item)
-            previous = parse_iso_utc(history[index + 1])
+            current = parse_iso_utc(timestamp)
+            previous = parse_iso_utc(completion_timestamp(history[index + 1]))
             if current and previous:
                 entry["days_since_previous"] = max((current - previous).days, 0)
         history_entries.append(entry)
@@ -237,7 +252,7 @@ def enrich_task(
     task["is_paused"] = bool(task["is_paused"])
     task["reminders_enabled"] = bool(task["reminders_enabled"])
     task["cadence"] = cadence_insight(
-        history,
+        timestamps,
         manual_interval_days=task["manual_interval_days"],
         due_soon_lead_days=task["due_soon_lead_days"],
         is_paused=task["is_paused"],
@@ -274,14 +289,14 @@ def task_payload(db: sqlite3.Connection, task_id: int) -> Optional[dict]:
     task = dict(row)
     completion_rows = db.execute(
         """
-        SELECT completed_at
+        SELECT completed_at, note
         FROM task_completions
         WHERE task_id = ?
         ORDER BY completed_at DESC
         """,
         (task_id,),
     ).fetchall()
-    history = [row["completed_at"] for row in completion_rows]
+    history = [dict(row) for row in completion_rows]
     return enrich_task(task, history)
 
 
@@ -581,6 +596,15 @@ def normalize_name(value: str) -> Optional[str]:
     return name
 
 
+def normalize_completion_note(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    note = value.strip()
+    if len(note) > MAX_COMPLETION_NOTE_LENGTH:
+        return None
+    return note or None
+
+
 def parse_optional_interval(value: str) -> Optional[float]:
     if not value.strip():
         return None
@@ -665,7 +689,7 @@ def export_snapshot(db: sqlite3.Connection) -> dict:
         dict(row)
         for row in db.execute(
             """
-            SELECT id, task_id, completed_at
+            SELECT id, task_id, completed_at, note
             FROM task_completions
             ORDER BY id ASC
             """
@@ -805,13 +829,14 @@ def restore_snapshot(db: sqlite3.Connection, snapshot: dict) -> bool:
                 raise ValueError("Invalid completion row")
             db.execute(
                 """
-                INSERT INTO task_completions (id, task_id, completed_at)
-                VALUES (?, ?, ?)
+                INSERT INTO task_completions (id, task_id, completed_at, note)
+                VALUES (?, ?, ?, ?)
                 """,
                 (
                     completion.get("id"),
                     completion.get("task_id"),
                     completion.get("completed_at"),
+                    normalize_completion_note(completion.get("note", ""))
                 ),
             )
         for delivery in reminder_deliveries:
@@ -910,7 +935,8 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS task_completions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-            completed_at TEXT NOT NULL
+            completed_at TEXT NOT NULL,
+            note TEXT
         )
         """
     )
@@ -955,6 +981,11 @@ def init_db() -> None:
         db.execute("ALTER TABLE tasks ADD COLUMN is_paused INTEGER NOT NULL DEFAULT 0")
     if "reminders_enabled" not in columns:
         db.execute("ALTER TABLE tasks ADD COLUMN reminders_enabled INTEGER NOT NULL DEFAULT 0")
+    completion_columns = {
+        row["name"] for row in db.execute("PRAGMA table_info(task_completions)").fetchall()
+    }
+    if "note" not in completion_columns:
+        db.execute("ALTER TABLE task_completions ADD COLUMN note TEXT")
     delivery_columns = {
         row["name"] for row in db.execute("PRAGMA table_info(reminder_deliveries)").fetchall()
     }
@@ -1014,7 +1045,7 @@ def index():
     ).fetchall()
     completion_rows = db.execute(
         """
-        SELECT task_id, completed_at
+        SELECT task_id, completed_at, note
         FROM task_completions
         ORDER BY completed_at DESC
         """
@@ -1022,7 +1053,7 @@ def index():
     completions_by_task = {}
     for row in completion_rows:
         task_id = int(row["task_id"])
-        completions_by_task.setdefault(task_id, []).append(row["completed_at"])
+        completions_by_task.setdefault(task_id, []).append(dict(row))
 
     tasks_by_group = {group["id"]: [] for group in groups}
     ungrouped_tasks = []
@@ -1114,13 +1145,17 @@ def complete_task(task_id: int):
     if not task:
         abort(404)
 
+    note = normalize_completion_note(request.form.get("note", ""))
+    if request.form.get("note", "").strip() and note is None:
+        return mutation_error(f"Completion notes must be {MAX_COMPLETION_NOTE_LENGTH} characters or fewer.")
+
     now = datetime.now(timezone.utc).isoformat()
     db.execute(
         """
-        INSERT INTO task_completions (task_id, completed_at)
-        VALUES (?, ?)
+        INSERT INTO task_completions (task_id, completed_at, note)
+        VALUES (?, ?, ?)
         """,
-        (task_id, now),
+        (task_id, now, note),
     )
     db.execute(
         "UPDATE tasks SET last_completed_at = ? WHERE id = ?",

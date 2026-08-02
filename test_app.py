@@ -89,12 +89,13 @@ class MutationApiTest(unittest.TestCase):
         self.assertEqual(created_task["completion_count"], 0)
 
         complete_response = self.post_json(
-            f"/tasks/{created_task['id']}/complete", {}
+            f"/tasks/{created_task['id']}/complete", {"note": "Watered the fern"}
         )
         self.assertEqual(complete_response.status_code, 200)
         completed_task = complete_response.get_json()["task"]
         self.assertEqual(completed_task["completion_count"], 1)
         self.assertEqual(completed_task["completed_ago"], "Completed today")
+        self.assertEqual(completed_task["completion_history"][0]["note"], "Watered the fern")
 
         move_response = self.post_json(
             f"/tasks/{created_task['id']}/move", {"group_id": 1}
@@ -116,6 +117,21 @@ class MutationApiTest(unittest.TestCase):
             first_response.get_json()["task"]["id"],
             second_response.get_json()["task"]["id"],
         )
+
+    def test_completion_note_is_preserved_by_backups(self):
+        create_response = self.post_json(
+            "/tasks", {"name": "Replace filter", "group_id": 1}
+        )
+        task_id = create_response.get_json()["task"]["id"]
+        self.post_json(f"/tasks/{task_id}/complete", {"note": "Installed HEPA filter"})
+
+        with app.app_context():
+            db = get_db()
+            snapshot = export_snapshot(db)
+            self.assertTrue(restore_snapshot(db, snapshot))
+            task = task_payload(db, task_id)
+
+        self.assertEqual(task["completion_history"][0]["note"], "Installed HEPA filter")
 
     def test_json_actions_require_a_csrf_token(self):
         response = self.client.post(

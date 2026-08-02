@@ -1,201 +1,187 @@
 # Cadence
 
-Cadence is a lightweight Flask app for tracking recurring tasks, grouped by category, with completion history and simple backup/restore controls.
+Cadence is a Flask application for recurring tasks. Tasks belong to groups. The application stores completion history in SQLite.
 
-## What it does
+## Features
 
-- Create task groups (for example: Health, Home, Work)
-- Add tasks into groups
-- Mark tasks complete and store full completion history
-- Show human-friendly "last completed" timing
-- Provide a hidden admin route for task deletion, full wipe, and restore from JSON backups
-- Persist data in SQLite
-
-## Tech stack
-
-- Python
-- Flask
-- SQLite
-- Gunicorn (for container runtime)
-- Docker / Docker Compose (optional)
+- Create task groups, such as Health, Home, and Work.
+- Add tasks to a group.
+- Complete a task with an optional note of 500 characters or fewer.
+- View the completion history and the time since the last completion.
+- Set a task cadence, due-soon lead time, pause state, and reminder state.
+- Use an admin page to delete tasks, erase data, and restore JSON backups.
+- Store data in SQLite.
 
 ## Requirements
 
-- Python 3.10+ (3.12 recommended)
+- Python 3.10 or later.
 - `pip`
-- Docker + Docker Compose plugin (optional, for containerized run)
+- Docker with the Docker Compose plugin for a container run.
 
-## Quick start (local Python)
+## Run Locally
+
+Create and activate a virtual environment.
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
+```
+
+Install the Python packages.
+
+```bash
 pip install -r requirements.txt
 ```
 
-Create an environment file:
+Create the environment file.
 
 ```bash
 cp .env.example .env
 ```
 
-Then edit `.env` and set at least:
+Set these values in `.env`:
 
-- `ADMIN_SLUG` (long random slug)
-- `SECRET_KEY` (recommended: 64 hex chars)
-- `USER_TIMEZONE` (IANA timezone like `America/New_York` or `UTC`)
+- `ADMIN_SLUG`: A long random string.
+- `SECRET_KEY`: A random 64-character hexadecimal string.
+- `USER_TIMEZONE`: An IANA time zone, such as `America/New_York` or `UTC`.
 
-Generate a strong `SECRET_KEY` if needed:
+Generate a `SECRET_KEY`.
 
 ```bash
 python3 -c 'import secrets; print(secrets.token_hex(32))'
 ```
 
-Run:
+Start the application.
 
 ```bash
 python app.py
 ```
 
-Open: `http://127.0.0.1:5000`
+Open `http://127.0.0.1:5000`.
 
-Notes:
+## Run With Docker Compose
 
-- `ADMIN_SLUG` is optional, but without it all `/admin/...` routes return `404`.
-- If `SECRET_KEY` is not set, the app generates one at startup (sessions are then invalidated on restart).
-
-## Quick start (Docker Compose)
-
-Create and configure your env file:
+Create the environment file.
 
 ```bash
 cp .env.example .env
 ```
 
-Then update `ADMIN_SLUG`, `SECRET_KEY`, and `USER_TIMEZONE` in `.env`.
+Set `ADMIN_SLUG`, `SECRET_KEY`, and `USER_TIMEZONE` in `.env`.
 
-Start:
+Start the services.
 
 ```bash
 docker compose up --build -d
 ```
 
-View logs:
+Open `http://127.0.0.1:5000`.
+
+Read the application log.
 
 ```bash
 docker compose logs -f cadence
 ```
 
-Stop:
+Stop the services.
 
 ```bash
 docker compose down
 ```
 
-Open: `http://127.0.0.1:5000`
-
 ## Configuration
 
-Environment variables used by the app:
+The application reads the following environment variables.
 
-| Variable | Default | Purpose |
+| Variable | Default | Description |
 | --- | --- | --- |
-| `ADMIN_SLUG` | unset | Secret slug for admin route (`/admin/<slug>`). If unset, admin route is disabled (404). |
-| `SECRET_KEY` | random at process start | Flask session and CSRF signing key. Set this explicitly in real deployments. |
-| `USER_TIMEZONE` | `UTC` | Timezone used for displayed completion times (IANA format, e.g. `America/Chicago`). Invalid values fall back to `UTC`. |
-| `DATABASE_PATH` | `./tasks.db` | SQLite database file path. |
+| `ADMIN_SLUG` | unset | Secret value in the admin URL. The admin page returns `404` if this value is unset. |
+| `SECRET_KEY` | random at process start | Key for Flask sessions and CSRF tokens. Set this value for deployments. |
+| `USER_TIMEZONE` | `UTC` | Time zone for completion times. Invalid values use `UTC`. |
+| `DATABASE_PATH` | `./tasks.db` | SQLite database path. |
 | `BACKUP_DIR` | `./backups` | Directory for JSON backups. |
-| `MAX_NAME_LENGTH` | `120` | Maximum length for group/task names. |
-| `SESSION_COOKIE_SECURE` | `false` | Set to `true` when serving over HTTPS. |
-| `FLASK_DEBUG` | `false` | Enables Flask debug mode when running `python app.py`. |
-| `PUBLIC_BASE_URL` | unset | Public HTTPS URL used in reminder email action links. Required for reminders. |
-| `SMTP_HOST` | unset | SMTP server hostname. Required for reminders. |
+| `MAX_NAME_LENGTH` | `120` | Maximum length for group and task names. |
+| `SESSION_COOKIE_SECURE` | `false` | Set to `true` for HTTPS. |
+| `FLASK_DEBUG` | `false` | Enables Flask debug mode for `python app.py`. |
+| `PUBLIC_BASE_URL` | unset | Public HTTPS URL for reminder links. |
+| `SMTP_HOST` | unset | SMTP server host. |
 | `SMTP_PORT` | `587` | SMTP server port. |
-| `SMTP_USERNAME` | unset | Optional SMTP authentication username. |
-| `SMTP_PASSWORD` | unset | SMTP authentication password when a username is configured. |
-| `SMTP_FROM` | unset | Sender address shown in reminders. Required for reminders. |
-| `SMTP_USE_TLS` | `true` | Starts TLS before SMTP authentication and sending. |
-| `REMINDER_RECIPIENT` | unset | Recipient address for reminders. Required for reminders. |
-| `REMINDER_DIGEST_HOUR` | `8` | Local hour (0-23) for the daily digest. |
-| `EMAIL_ACTION_SECRET` | unset | Distinct secret used to authenticate expiring email action links. Required for reminders. |
-| `EMAIL_ACTION_TTL_HOURS` | `72` | Number of hours an email completion link remains valid. |
-| `REMINDER_WORKER_INTERVAL_SECONDS` | `60` | How often the separate reminder worker checks for work. |
-| `REMINDER_MAX_ATTEMPTS` | `3` | Maximum attempts for an individual or digest delivery. |
-| `REMINDER_RETRY_DELAY_MINUTES` | `15` | Delay before retrying a failed or stale pending delivery. |
-| `DEFAULT_DUE_SOON_LEAD_DAYS` | `0` | Global due-soon lead window; `0` retains automatic proportional timing. |
+| `SMTP_USERNAME` | unset | SMTP user name. |
+| `SMTP_PASSWORD` | unset | SMTP password. |
+| `SMTP_FROM` | unset | Sender address for reminders. |
+| `SMTP_USE_TLS` | `true` | Starts TLS before SMTP authentication and mail delivery. |
+| `REMINDER_RECIPIENT` | unset | Recipient address for reminders. |
+| `REMINDER_DIGEST_HOUR` | `8` | Local hour from 0 through 23 for the daily digest. |
+| `EMAIL_ACTION_SECRET` | unset | Secret for expiring reminder links. |
+| `EMAIL_ACTION_TTL_HOURS` | `72` | Valid time for a reminder link, in hours. |
+| `REMINDER_WORKER_INTERVAL_SECONDS` | `60` | Time between worker scans, in seconds. |
+| `REMINDER_MAX_ATTEMPTS` | `3` | Maximum deliveries for one reminder. |
+| `REMINDER_RETRY_DELAY_MINUTES` | `15` | Time before a retry, in minutes. |
+| `DEFAULT_DUE_SOON_LEAD_DAYS` | `0` | Global due-soon lead time. `0` uses automatic proportional timing. |
 
-## Email reminders
+## Email Reminders
 
-The Compose setup runs a separate `reminder-worker` service against the same SQLite
-volume as the web app. It remains disabled until all required reminder configuration
-is present: `PUBLIC_BASE_URL`, `SMTP_HOST`, `SMTP_FROM`, `REMINDER_RECIPIENT`, and
-`EMAIL_ACTION_SECRET`.
+Docker Compose starts a `reminder-worker` service. The service uses the same SQLite data as the web application.
 
-For each enabled, unpaused overdue task, the worker sends one individual reminder per
-expected due timestamp. After the configured local digest hour, it sends one daily
-digest containing all enabled tasks that are due soon or overdue. Delivery records
-prevent duplicate sends across worker runs.
-Failed or stale pending deliveries retry after the configured delay until the maximum
-attempt count is reached; each attempt and failure remains visible in the admin panel.
+The worker sends no mail until all required reminder values are set. The required values are `PUBLIC_BASE_URL`, `SMTP_HOST`, `SMTP_FROM`, `REMINDER_RECIPIENT`, and `EMAIL_ACTION_SECRET`.
 
-Email links open a confirmation page. Only the CSRF-protected confirmation `POST`
-marks a task complete; links are HMAC-authenticated, expire, and cannot be reused.
+The worker sends one reminder for each overdue due time. After the local digest hour, it sends a daily digest for due-soon and overdue tasks.
 
-## Data storage
+Delivery records prevent duplicate mail. Failed or stale deliveries retry until they reach `REMINDER_MAX_ATTEMPTS`.
 
-### Local run
+Reminder links open a confirmation page. Only the CSRF-protected confirmation `POST` completes a task. Links use HMAC authentication, expire, and work once.
+
+## Data Storage
+
+### Local Run
 
 - Database: `tasks.db`
 - Backups: `backups/backup-YYYYMMDD-HHMMSS.json`
 
-### Docker Compose run
+### Docker Compose Run
 
-- In container: database at `/data/tasks.db`, backups at `/data/backups`
-- Persisted via named volume: `cadence_data`
+- Database: `/data/tasks.db`
+- Backups: `/data/backups`
+- Persistent volume: `cadence_data`
 
-## Admin route
+## Admin Page
 
-Admin URL format:
+Open `http://127.0.0.1:5000/admin/<your-admin-slug>`.
 
-- `http://127.0.0.1:5000/admin/<your-admin-slug>`
+The admin page can delete a task and its completion history. It can erase all data after it creates a backup.
 
-Available admin actions:
+An erase creates the `General` group after it deletes all groups, tasks, and completions. The admin page can also restore a backup from the backup directory.
 
-- Delete a task (also removes its completion history)
-- Full wipe
-  - Creates a backup first
-  - Removes all groups, tasks, completions
-  - Re-creates default `General` group
-- Restore from an existing backup file in the backup directory
+## Security
 
-## Security behavior
+- All `POST` forms require a CSRF token.
+- Admin slug comparisons use constant-time comparison.
+- The application sends `Content-Security-Policy` response headers.
+- The application sends `X-Frame-Options: DENY` response headers.
+- The application sends `X-Content-Type-Options: nosniff` response headers.
+- The application sends `Referrer-Policy: no-referrer` response headers.
+- Session cookies use `HttpOnly` and `SameSite=Lax`.
 
-- All `POST` forms require CSRF token validation
-- Admin slug checks use constant-time comparison
-- Response headers include:
-  - `Content-Security-Policy`
-  - `X-Frame-Options: DENY`
-  - `X-Content-Type-Options: nosniff`
-  - `Referrer-Policy: no-referrer`
-- Session cookies are `HttpOnly` and `SameSite=Lax`
+## Project Files
 
-## Project layout
-
-- `app.py`: Flask app and SQLite logic
-- `templates/index.html`: main task UI
-- `templates/admin.html`: admin UI
-- `docker-compose.yml`: local container orchestration
-- `Dockerfile`: production-style app image
-- `.env.example`: example environment file for local and Compose runs
+- `app.py`: Flask application and SQLite functions.
+- `reminder_worker.py`: Email reminder worker.
+- `templates/index.html`: Main task page.
+- `templates/admin.html`: Admin page.
+- `docker-compose.yml`: Container service configuration.
+- `Dockerfile`: Application image definition.
+- `.env.example`: Example environment configuration.
 
 ## Troubleshooting
 
-- `docker compose` fails with `set ADMIN_SLUG` or `set SECRET_KEY`:
-  - Ensure `.env` exists (`cp .env.example .env`) and contains both values.
-- Timezone still shows as UTC in Docker:
-  - Ensure `USER_TIMEZONE` is set in `.env` with an IANA value (for example `America/New_York`).
-  - Rebuild after changing timezone config: `docker compose up --build -d`.
-- Admin page returns `404`:
-  - Ensure `ADMIN_SLUG` is set and URL slug matches exactly.
-- Data appears reset after container restart:
-  - Confirm the container uses the `cadence_data` volume and you did not remove volumes.
+If `docker compose` reports `set ADMIN_SLUG` or `set SECRET_KEY`, create `.env`. Then set both values.
+
+If Docker shows completion times in UTC, set `USER_TIMEZONE` in `.env`. Then rebuild the services.
+
+```bash
+docker compose up --build -d
+```
+
+If the admin page returns `404`, make sure that `ADMIN_SLUG` is set. Make sure that the URL has the same slug.
+
+If data disappears after a container restart, make sure that the service uses the `cadence_data` volume. Do not remove volumes.
