@@ -4,3 +4,4 @@ backups/
 *.pyc
 tasks.db
 .env
+/plans

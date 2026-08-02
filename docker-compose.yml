@@ -12,6 +12,38 @@ services:
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
       DATABASE_PATH: /data/tasks.db
       BACKUP_DIR: /data/backups
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      EMAIL_ACTION_SECRET: ${EMAIL_ACTION_SECRET:-}
+      EMAIL_ACTION_TTL_HOURS: ${EMAIL_ACTION_TTL_HOURS:-72}
+      DEFAULT_DUE_SOON_LEAD_DAYS: ${DEFAULT_DUE_SOON_LEAD_DAYS:-0}
+    volumes:
+      - cadence_data:/data
+    restart: unless-stopped
+  reminder-worker:
+    build:
+      context: .
+    command: ["python", "reminder_worker.py"]
+    environment:
+      ADMIN_SLUG: ${ADMIN_SLUG:?set ADMIN_SLUG}
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY}
+      USER_TIMEZONE: ${USER_TIMEZONE:-UTC}
+      DATABASE_PATH: /data/tasks.db
+      BACKUP_DIR: /data/backups
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+      REMINDER_RECIPIENT: ${REMINDER_RECIPIENT:-}
+      REMINDER_DIGEST_HOUR: ${REMINDER_DIGEST_HOUR:-8}
+      EMAIL_ACTION_SECRET: ${EMAIL_ACTION_SECRET:-}
+      EMAIL_ACTION_TTL_HOURS: ${EMAIL_ACTION_TTL_HOURS:-72}
+      REMINDER_WORKER_INTERVAL_SECONDS: ${REMINDER_WORKER_INTERVAL_SECONDS:-60}
+      REMINDER_MAX_ATTEMPTS: ${REMINDER_MAX_ATTEMPTS:-3}
+      REMINDER_RETRY_DELAY_MINUTES: ${REMINDER_RETRY_DELAY_MINUTES:-15}
+      DEFAULT_DUE_SOON_LEAD_DAYS: ${DEFAULT_DUE_SOON_LEAD_DAYS:-0}
     volumes:
       - cadence_data:/data
     restart: unless-stopped

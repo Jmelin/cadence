@@ -14,7 +14,9 @@ COPY requirements.txt ./
 RUN pip install --no-compile -r requirements.txt
 
 COPY --chown=app:app app.py ./app.py
+COPY --chown=app:app reminder_worker.py ./reminder_worker.py
 COPY --chown=app:app templates ./templates
+COPY --chown=app:app static ./static
 RUN mkdir -p /data && chown app:app /data
 
 USER app
