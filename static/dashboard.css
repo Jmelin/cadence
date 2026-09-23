@@ -13,16 +13,16 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --canvas: #131c19;
-    --surface: #1b2722;
-    --surface-muted: #25352e;
-    --text: #e5eee8;
-    --muted: #a5b7ac;
-    --line: #36493e;
-    --accent: #95d4b3;
-    --accent-soft: #2c4839;
-    --warning: #e6bc75;
-    --danger: #f19a90;
+    --canvas: #11151b;
+    --surface: #1c222b;
+    --surface-muted: #252d38;
+    --text: #e8edf4;
+    --muted: #a8b3c2;
+    --line: #394452;
+    --accent: #8cbcff;
+    --accent-soft: #263b55;
+    --warning: #f0c681;
+    --danger: #f39a9a;
   }
 }
 * { box-sizing: border-box; }
@@ -48,15 +48,15 @@ button:hover, .button:hover { border-color: var(--accent); }
 .due_soon { color: var(--warning); }
 .scheduled { color: var(--accent); }
 .workspace { display: grid; grid-template-columns: minmax(0, 1fr) 285px; gap: 2rem; align-items: start; }
-.toolbar { display: flex; gap: 1rem; justify-content: space-between; align-items: center; }
+.toolbar { display: flex; gap: 1rem; justify-content: space-between; align-items: center; padding: 0.75rem 0 1rem; }
 .toolbar h1 { margin: 0; font-size: 1.2rem; letter-spacing: -0.02em; line-height: 1.5; }
 .toolbar .meta { font-size: 0.8rem; }
 label { display: grid; gap: 0.35rem; font-size: 0.8rem; font-weight: 600; }
 input:not([type="hidden"]):not([type="checkbox"]), select { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 0.7rem; background: var(--surface); color: var(--text); font: inherit; font-size: 0.9rem; }
 .search { min-width: 15rem; }
-.status { margin: 0.5rem 0; font-size: 0.85rem; color: var(--accent); }
-.status:empty { margin: 0; height: 1rem; }
-.status.error { color: var(--danger); }
+.status { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 10; max-width: min(28rem, calc(100vw - 2rem)); margin: 0; padding: 0.8rem 1rem; border: 1px solid var(--accent); border-radius: 9px; background: var(--surface); color: var(--text); box-shadow: 0 8px 24px #0003; font-size: 0.85rem; }
+.status:empty { display: none; }
+.status.error { border-color: var(--danger); }
 .group-section { margin-bottom: 1.2rem; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 .group-heading { display: flex; justify-content: space-between; align-items: center; padding: 0.8rem 1.2rem; background: var(--surface-muted); }
 .group-heading h2 { margin: 0; font-size: 0.85rem; }

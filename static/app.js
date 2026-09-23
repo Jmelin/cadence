@@ -30,11 +30,12 @@ function refreshDashboard() {
 }
 
 function sortTasks(section) {
-  const rank = { overdue: 0, due_soon: 1, scheduled: 2, learning: 3, paused: 4 };
   const list = section.querySelector(".task-list");
-  [...list.children].sort((a, b) => rank[a.dataset.status] - rank[b.dataset.status]
-    || (a.dataset.dueAt || "").localeCompare(b.dataset.dueAt || "")
-    || a.dataset.name.localeCompare(b.dataset.name)).forEach((card) => list.append(card));
+  const sorted = [...list.children].sort((a, b) => a.dataset.name.localeCompare(b.dataset.name, undefined, { sensitivity: "base" })
+    || Number(a.dataset.taskId) - Number(b.dataset.taskId));
+  sorted.forEach((card, index) => {
+    if (list.children[index] !== card) list.insertBefore(card, list.children[index]);
+  });
 }
 
 function csrfToken() {
@@ -277,8 +278,11 @@ function upsertTask(task) {
   for (const selector of [".task-details", ".task-settings", ".task-history"]) {
     if (existing?.querySelector(selector)?.open) card.querySelector(selector).open = true;
   }
-  if (existing) existing.replaceWith(card);
-  section.querySelector(".task-list").append(card);
+  if (existing && previousSection === section) existing.replaceWith(card);
+  else {
+    existing?.remove();
+    section.querySelector(".task-list").append(card);
+  }
   if (previousSection && previousSection !== section) updateGroupCount(previousSection);
   updateGroupCount(section);
   sortTasks(section);

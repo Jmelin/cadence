@@ -21,7 +21,7 @@ The dashboard shows each task's due status and time since its last completion. S
 - Open **Details** to see exact times, completion history, notes, and schedule settings.
 - Select **Complete** to record a completion. Use **Complete with note** inside Details to include a note.
 
-Tasks appear by area, with overdue tasks first in each area. Search, filters, and updates without a page reload require JavaScript.
+Tasks appear by area, sorted by name A–Z within each area. Search, filters, and updates without a page reload require JavaScript.
 Task forms and expandable details also work without JavaScript.
 
 ### Repeat intervals
