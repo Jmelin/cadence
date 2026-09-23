@@ -258,6 +258,30 @@ def enrich_task(task: dict, history: list, now: Optional[datetime] = None) -> di
         is_paused=task["is_paused"],
         now=now,
     )
+    cadence = task["cadence"]
+    task["dashboard_status"] = (
+        "paused" if task["is_paused"] else cadence["status"]
+        or ("scheduled" if cadence["due_at"] else "learning")
+    )
+    if cadence["due_at"]:
+        today = (now or datetime.now(timezone.utc)).astimezone(app.config["DISPLAY_TIMEZONE"]).date()
+        due_date = parse_iso_utc(cadence["due_at"]).astimezone(app.config["DISPLAY_TIMEZONE"]).date()
+        days = (due_date - today).days
+        task["due_summary"] = (
+            f"{abs(days)} days overdue" if days < -1 else
+            "1 day overdue" if days == -1 else
+            "Due today" if days == 0 else
+            "Due tomorrow" if days == 1 else f"Due in {days} days"
+        )
+    else:
+        task["due_summary"] = (
+            "Paused" if task["is_paused"] else
+            "Complete once to start" if task["manual_interval_days"] else "Learning your routine"
+        )
+    task["schedule_summary"] = (
+        f"Every {format_interval_days(task['manual_interval_days'])} · Manual"
+        if task["manual_interval_days"] else "Automatic schedule"
+    )
     return task
 
 
@@ -1100,16 +1124,23 @@ def create_task():
     if not name:
         return mutation_error("Enter a task name.")
 
+    manual_interval_raw = request.form.get("manual_interval_days", "")
+    manual_interval_days = parse_optional_interval(manual_interval_raw)
+    if manual_interval_raw.strip() and manual_interval_days is None:
+        return mutation_error(
+            f"Manual cadence must be greater than 0 and at most {MAX_CADENCE_INTERVAL_DAYS} days."
+        )
+
     db = get_db()
     group_id_raw = request.form.get("group_id", "")
     group_id = get_valid_group_id(db, group_id_raw) or get_default_group_id(db)
     now = datetime.now(timezone.utc).isoformat()
     cursor = db.execute(
         """
-        INSERT OR IGNORE INTO tasks (name, created_at, last_completed_at, group_id)
-        VALUES (?, ?, NULL, ?)
+        INSERT OR IGNORE INTO tasks (name, created_at, last_completed_at, group_id, manual_interval_days)
+        VALUES (?, ?, NULL, ?, ?)
         """,
-        (name, now, group_id),
+        (name, now, group_id, manual_interval_days),
     )
     db.commit()
     if wants_json_response():

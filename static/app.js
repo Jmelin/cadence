@@ -1,6 +1,42 @@
 const taskGroups = document.querySelector("#task-groups");
-const insights = document.querySelector("#insights");
 const status = document.querySelector(".status");
+let activeFilter = "all";
+const search = document.querySelector("#task-search");
+
+function refreshDashboard() {
+  const cards = [...taskGroups.querySelectorAll(".task-card")];
+  const query = search.value.trim().toLocaleLowerCase();
+  let visible = 0;
+  document.querySelectorAll("[data-count]").forEach((counter) => {
+    counter.textContent = cards.filter((card) => counter.dataset.count === "all" || card.dataset.status === counter.dataset.count).length;
+  });
+  for (const card of cards) {
+    const area = card.closest(".group-section").dataset.groupName;
+    card.hidden = !(activeFilter === "all" || card.dataset.status === activeFilter)
+      || !`${card.dataset.name} ${area}`.toLocaleLowerCase().includes(query);
+    if (!card.hidden) visible++;
+  }
+  taskGroups.querySelectorAll(".group-section").forEach((section) => {
+    const count = section.querySelectorAll(".task-card:not([hidden])").length;
+    section.hidden = count === 0;
+    section.querySelector(".group-count").textContent = `${count} task${count === 1 ? "" : "s"}`;
+  });
+  document.querySelector("#result-count").textContent = `${visible} of ${cards.length} tasks`;
+  document.querySelector("#no-results").hidden = visible > 0 || cards.length === 0;
+  document.querySelectorAll("[data-filter]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.filter === activeFilter));
+    if (button.dataset.filter === activeFilter) document.querySelector("#view-title").textContent = button.querySelector("span").textContent;
+  });
+}
+
+function sortTasks(section) {
+  const list = section.querySelector(".task-list");
+  const sorted = [...list.children].sort((a, b) => a.dataset.name.localeCompare(b.dataset.name, undefined, { sensitivity: "base" })
+    || Number(a.dataset.taskId) - Number(b.dataset.taskId));
+  sorted.forEach((card, index) => {
+    if (list.children[index] !== card) list.insertBefore(card, list.children[index]);
+  });
+}
 
 function csrfToken() {
   return document.querySelector('input[name="_csrf_token"]').value;
@@ -37,6 +73,7 @@ function numberField(labelText, name, value, min, max, step = "1") {
   input.max = max;
   input.step = step;
   input.value = value ?? "";
+  input.placeholder = "Automatic";
   label.append(input);
   return label;
 }
@@ -57,7 +94,7 @@ function taskSettings(task) {
   const details = document.createElement("details");
   details.className = "task-settings";
   const summary = document.createElement("summary");
-  summary.textContent = "Cadence settings";
+  summary.textContent = "Schedule & reminders";
   const form = document.createElement("form");
   form.className = "settings-form";
   form.method = "post";
@@ -66,10 +103,14 @@ function taskSettings(task) {
   const submit = document.createElement("button");
   submit.type = "submit";
   submit.textContent = "Save settings";
+  const help = document.createElement("p");
+  help.className = "field-help";
+  help.textContent = "Leave the repeat interval empty to use your completion history. A manual interval starts after a completion.";
   form.append(
     hiddenToken(),
-    numberField("Manual cadence, days", "manual_interval_days", task.manual_interval_days, "0.1", "3650", "0.1"),
-    numberField("Due-soon lead, days", "due_soon_lead_days", task.due_soon_lead_days, "1", "365"),
+    help,
+    numberField("Repeat every, in days", "manual_interval_days", task.manual_interval_days, "0.1", "3650", "0.1"),
+    numberField("Show as due soon, days before", "due_soon_lead_days", task.due_soon_lead_days, "1", "365"),
     checkboxField("Pause task", "is_paused", task.is_paused),
     checkboxField("Enable reminder emails", "reminders_enabled", task.reminders_enabled),
     submit,
@@ -82,6 +123,9 @@ function taskCard(task) {
   const card = document.createElement("li");
   card.className = "task-card";
   card.dataset.taskId = task.id;
+  card.dataset.status = task.dashboard_status;
+  card.dataset.name = task.name;
+  card.dataset.dueAt = task.cadence.due_at || "";
   card.tabIndex = -1;
   const top = document.createElement("div");
   top.className = "task-top";
@@ -90,15 +134,31 @@ function taskCard(task) {
   name.textContent = task.name;
   const completed = document.createElement("div");
   completed.className = "task-subtitle";
-  completed.textContent = `Last completed: ${task.last_completed_display}`;
+  completed.textContent = task.completed_ago;
   heading.append(name, completed);
   top.append(heading);
   card.append(top);
-  if (task.cadence.message) {
-    const cadence = document.createElement("p");
-    cadence.className = `cadence${task.cadence.status ? ` ${task.cadence.status}` : ""}`;
-    cadence.textContent = task.cadence.message;
-    card.append(cadence);
+  const timing = document.createElement("div");
+  timing.className = "task-timing";
+  const cadence = document.createElement("p");
+  cadence.className = `cadence ${task.dashboard_status}`;
+  cadence.textContent = task.due_summary;
+  const schedule = document.createElement("span");
+  schedule.className = "schedule-summary";
+  schedule.textContent = task.schedule_summary;
+  timing.append(cadence, schedule);
+  card.append(timing);
+  const details = document.createElement("details");
+  details.className = "task-details";
+  const detailsSummary = document.createElement("summary");
+  detailsSummary.textContent = "Details";
+  const content = document.createElement("div");
+  content.className = "detail-content";
+  for (const text of [`Last completed: ${task.last_completed_display}`, task.cadence.message || "Complete this task three times to learn its repeat interval."]) {
+    const paragraph = document.createElement("p");
+    paragraph.className = "meta";
+    paragraph.textContent = text;
+    content.append(paragraph);
   }
 
   const actions = document.createElement("div");
@@ -108,16 +168,29 @@ function taskCard(task) {
   completeForm.action = `/tasks/${task.id}/complete`;
   completeForm.dataset.asyncAction = "complete";
   const complete = document.createElement("button");
-  complete.className = "primary";
   complete.type = "submit";
-  complete.textContent = "Complete";
+  complete.textContent = "Complete with note";
   const note = document.createElement("input");
   note.type = "text";
   note.name = "note";
   note.maxLength = 500;
-  note.placeholder = "Completion note (optional)";
+  note.placeholder = "What did you do?";
   note.setAttribute("aria-label", `Completion note for ${task.name}`);
-  completeForm.append(hiddenToken(), note, complete);
+  const noteLabel = document.createElement("label");
+  noteLabel.textContent = "Completion note";
+  noteLabel.append(note);
+  completeForm.append(hiddenToken(), noteLabel, complete);
+  const quickForm = document.createElement("form");
+  quickForm.className = "quick-complete";
+  quickForm.method = "post";
+  quickForm.action = completeForm.action;
+  quickForm.dataset.asyncAction = "complete";
+  const quickButton = document.createElement("button");
+  quickButton.type = "submit";
+  quickButton.textContent = "✓ Complete";
+  quickButton.setAttribute("aria-label", `Complete ${task.name}`);
+  quickForm.append(hiddenToken(), quickButton);
+  card.append(quickForm);
   const moveForm = document.createElement("form");
   moveForm.method = "post";
   moveForm.action = `/tasks/${task.id}/move`;
@@ -126,11 +199,18 @@ function taskCard(task) {
   move.name = "group_id";
   move.setAttribute("aria-label", `Move ${task.name}`);
   groupOptions(move, task.group_id);
-  moveForm.append(hiddenToken(), move);
+  const moveLabel = document.createElement("label");
+  moveLabel.textContent = "Area";
+  moveLabel.append(move);
+  const moveButton = document.createElement("button");
+  moveButton.type = "submit";
+  moveButton.textContent = "Move";
+  moveForm.append(hiddenToken(), moveLabel, moveButton);
   actions.append(completeForm, moveForm);
-  card.append(actions);
+  content.append(actions);
 
   const history = document.createElement("details");
+  history.className = "task-history";
   const summary = document.createElement("summary");
   summary.textContent = `History (${task.completion_count})`;
   history.append(summary);
@@ -155,7 +235,9 @@ function taskCard(task) {
     empty.textContent = "No completion history yet.";
     history.append(empty);
   }
-  card.append(history, taskSettings(task));
+  content.append(taskSettings(task), history);
+  details.append(detailsSummary, content);
+  card.append(details);
   return card;
 }
 
@@ -187,52 +269,29 @@ function updateGroupCount(section) {
   count.textContent = `${total} task${total === 1 ? "" : "s"}`;
 }
 
-function insightList(kind) {
-  let section = insights.querySelector(`[data-insight-status="${kind}"]`);
-  if (section) return section.querySelector(".insight-list");
-  section = document.createElement("section");
-  section.className = `insight-section ${kind}`;
-  section.dataset.insightStatus = kind;
-  const title = document.createElement("h2");
-  title.textContent = kind === "overdue" ? "Overdue" : "Due soon";
-  const list = document.createElement("ul");
-  list.className = "insight-list";
-  section.append(title, list);
-  insights.append(section);
-  return list;
-}
-
-function updateAlert(task) {
-  insights.querySelectorAll(`[data-alert-task-id="${task.id}"]`).forEach((item) => item.remove());
-  insights.querySelectorAll(".insight-section").forEach((section) => {
-    if (!section.querySelector(".insight-list").children.length) section.remove();
-  });
-  if (!task.cadence.status) return;
-  const item = document.createElement("li");
-  item.dataset.alertTaskId = task.id;
-  const button = document.createElement("button");
-  button.className = "insight-task";
-  button.type = "button";
-  button.dataset.focusTaskId = task.id;
-  button.textContent = task.name;
-  const detail = document.createElement("div");
-  detail.className = "meta";
-  detail.textContent = task.cadence.message;
-  item.append(button, detail);
-  insightList(task.cadence.status).append(item);
-}
-
 function upsertTask(task) {
   const existing = taskGroups.querySelector(`[data-task-id="${task.id}"]`);
   const previousSection = existing?.closest(".group-section");
   const section = taskGroups.querySelector(`[data-group-id="${task.group_id}"]`) || ensureGroup({ id: task.group_id, name: task.group_name });
   const card = taskCard(task);
-  if (existing) existing.replaceWith(card);
-  section.querySelector(".task-list").append(card);
+  const hadFocus = existing?.contains(document.activeElement);
+  for (const selector of [".task-details", ".task-settings", ".task-history"]) {
+    if (existing?.querySelector(selector)?.open) card.querySelector(selector).open = true;
+  }
+  if (existing && previousSection === section) existing.replaceWith(card);
+  else {
+    existing?.remove();
+    section.querySelector(".task-list").append(card);
+  }
   if (previousSection && previousSection !== section) updateGroupCount(previousSection);
   updateGroupCount(section);
-  updateAlert(task);
+  sortTasks(section);
   document.querySelector("#empty-tasks")?.remove();
+  refreshDashboard();
+  if (hadFocus) {
+    if (card.hidden) document.querySelector(`[data-filter="${activeFilter}"]`).focus();
+    else card.focus({ preventScroll: true });
+  }
 }
 
 async function submitAsync(form) {
@@ -266,6 +325,7 @@ document.addEventListener("submit", async (event) => {
         select.append(option);
       });
       form.reset();
+      refreshDashboard();
       return announce(`${result.group.name} is ready.`);
     }
     if (form.dataset.asyncAction === "create-task" && !result.created) return announce("That task already exists.", true);
@@ -282,14 +342,21 @@ document.addEventListener("submit", async (event) => {
   }
 });
 
-document.addEventListener("change", (event) => {
-  if (event.target.matches('form[data-async-action="move"] select')) event.target.form.requestSubmit();
-});
-
 document.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-focus-task-id]");
-  if (!button) return;
-  const card = taskGroups.querySelector(`[data-task-id="${button.dataset.focusTaskId}"]`);
-  card?.scrollIntoView({ behavior: "smooth", block: "center" });
-  card?.focus({ preventScroll: true });
+  const button = event.target.closest("[data-filter]");
+  if (button) {
+    activeFilter = button.dataset.filter;
+    refreshDashboard();
+  }
 });
+search.addEventListener("input", refreshDashboard);
+document.querySelector("#clear-filters").addEventListener("click", () => {
+  activeFilter = "all";
+  search.value = "";
+  refreshDashboard();
+  search.focus();
+});
+taskGroups.querySelectorAll(".group-section").forEach(sortTasks);
+document.querySelector(".summary-grid").hidden = false;
+document.querySelector(".toolbar").hidden = false;
+refreshDashboard();

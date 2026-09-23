@@ -12,6 +12,31 @@ Cadence is a Flask application for recurring tasks. Tasks belong to groups. The 
 - Use an admin page to delete tasks, erase data, and restore JSON backups.
 - Store data in SQLite.
 
+## Task dashboard
+
+The dashboard shows each task's due status and time since its last completion. Status counts update after each change.
+
+- Select a status count to filter the tasks.
+- Use the search field to find a task or area.
+- Open **Details** to see exact times, completion history, notes, and schedule settings.
+- Select **Complete** to record a completion. Use **Complete with note** inside Details to include a note.
+
+Tasks appear by area, sorted by name A–Z within each area. Search, filters, and updates without a page reload require JavaScript.
+Task forms and expandable details also work without JavaScript.
+
+### Repeat intervals
+
+Automatic scheduling is the default. Cadence uses the median interval between completions after at least three completions with distinct times.
+
+To set a manual interval, enter a value in **Repeat every, in days** when you add a task.
+For an existing task, open **Details**, then **Schedule & reminders**.
+For example, `7` means weekly and `14` means every two weeks.
+
+A manual interval calculates the next due time from the last completion. A new task needs one completion before its schedule starts.
+Each completion starts the next interval. Reminder emails use this schedule when enabled.
+
+To return to automatic scheduling, clear the repeat interval and select **Save settings**. Cadence keeps the completion history.
+
 ## Requirements
 
 - Python 3.10 or later.

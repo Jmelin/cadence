@@ -118,6 +118,65 @@ class MutationApiTest(unittest.TestCase):
             second_response.get_json()["task"]["id"],
         )
 
+    def test_create_with_repeat_interval_and_return_to_automatic(self):
+        response = self.post_json(
+            "/tasks", {"name": "Water plants", "manual_interval_days": "7"}
+        )
+        self.assertEqual(response.status_code, 200)
+        task = response.get_json()["task"]
+        self.assertEqual(task["manual_interval_days"], 7)
+        self.assertEqual(task["cadence"]["source"], "manual")
+        self.assertIsNone(task["cadence"]["due_at"])
+        self.assertEqual(task["due_summary"], "Complete once to start")
+        completed = self.post_json(f"/tasks/{task['id']}/complete", {}).get_json()["task"]
+        due = datetime.fromisoformat(completed["cadence"]["due_at"])
+        last = datetime.fromisoformat(completed["last_completed_at"])
+        self.assertEqual(due - last, timedelta(days=7))
+        self.assertEqual(completed["dashboard_status"], "scheduled")
+        automatic = self.post_json(
+            f"/tasks/{task['id']}/settings", {"manual_interval_days": ""}
+        ).get_json()["task"]
+        self.assertIsNone(automatic["manual_interval_days"])
+        self.assertEqual(automatic["completion_count"], 1)
+        self.assertEqual(automatic["dashboard_status"], "learning")
+
+    def test_create_rejects_invalid_repeat_interval_without_saving(self):
+        for value in ["0", "-7", "3651", "NaN", "inf", "weekly"]:
+            with self.subTest(value=value):
+                response = self.post_json(
+                    "/tasks", {"name": "Invalid interval", "manual_interval_days": value}
+                )
+                self.assertEqual(response.status_code, 400)
+        with app.app_context():
+            self.assertEqual(get_db().execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 0)
+
+    def test_dashboard_summary_uses_local_calendar_date(self):
+        app.config["DISPLAY_TIMEZONE"] = ZoneInfo("America/Chicago")
+        task_id = self.create_overdue_reminder_task()
+        with app.app_context():
+            db = get_db()
+            db.execute("UPDATE tasks SET manual_interval_days = 1 WHERE id = ?", (task_id,))
+            db.commit()
+            with patch("app.datetime") as clock:
+                clock.now.return_value = datetime(2026, 1, 22, 1, tzinfo=timezone.utc)
+                clock.fromisoformat.side_effect = datetime.fromisoformat
+                task = task_payload(db, task_id)
+        self.assertEqual(task["dashboard_status"], "overdue")
+        self.assertEqual(task["due_summary"], "Due today")
+
+    def test_clearing_manual_interval_restores_learned_cadence(self):
+        task_id = self.create_overdue_reminder_task()
+        manual = self.post_json(
+            f"/tasks/{task_id}/settings", {"manual_interval_days": "30"}
+        ).get_json()["task"]
+        automatic = self.post_json(
+            f"/tasks/{task_id}/settings", {"manual_interval_days": ""}
+        ).get_json()["task"]
+        self.assertEqual(manual["cadence"]["interval_days"], 30)
+        self.assertEqual(automatic["cadence"]["interval_days"], 10)
+        self.assertEqual(automatic["cadence"]["source"], "learned")
+        self.assertEqual(automatic["completion_count"], 3)
+
     def test_completion_note_is_preserved_by_backups(self):
         create_response = self.post_json(
             "/tasks", {"name": "Replace filter", "group_id": 1}
