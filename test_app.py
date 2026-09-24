@@ -205,10 +205,42 @@ class MutationApiTest(unittest.TestCase):
         response = self.client.get("/")
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn(b'href="/activity"', response.data)
         self.assertIn(b'data-async-action="create-task"', response.data)
         self.assertIn(b'id="task-groups"', response.data)
         self.assertIn(b'src="/static/app.js"', response.data)
         self.assertIn(b"script-src 'self'", response.headers["Content-Security-Policy"].encode())
+
+    def test_activity_shows_completions_across_tasks_newest_first(self):
+        app.config["DISPLAY_TIMEZONE"] = ZoneInfo("America/Chicago")
+        first_id = self.post_json("/tasks", {"name": "Water plants"}).get_json()["task"]["id"]
+        second_id = self.post_json("/tasks", {"name": "Replace filter"}).get_json()["task"]["id"]
+        with app.app_context():
+            db = get_db()
+            db.executemany(
+                "INSERT INTO task_completions (task_id, completed_at, note) VALUES (?, ?, ?)",
+                [
+                    (first_id, "2026-01-21T23:00:00+00:00", None),
+                    (second_id, "2026-01-22T01:00:00+00:00", "New <filter>"),
+                    (first_id, "2026-01-22T02:00:00+00:00", "Watered"),
+                ],
+            )
+            db.commit()
+
+        response = self.client.get("/activity")
+        html = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertLess(html.index("Watered"), html.index("New &lt;filter&gt;"))
+        self.assertLess(html.index("New &lt;filter&gt;"), html.index("Jan 21, 2026 at 5:00 PM"))
+        self.assertIn("Jan 21, 2026 at 8:00 PM", html)
+        self.assertIn("Jan 21, 2026 at 7:00 PM", html)
+        self.assertIn('datetime="2026-01-22T02:00:00+00:00"', html)
+        self.assertIn('href="/"', html)
+
+    def test_activity_has_empty_state(self):
+        response = self.client.get("/activity")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"No activity yet", response.data)
 
     def test_cadence_insight_uses_median_gap_and_due_boundaries(self):
         history = [

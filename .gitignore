@@ -5,3 +5,4 @@ backups/
 tasks.db
 .env
 /plans
+.playwright-mcp/

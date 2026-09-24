@@ -31,6 +31,8 @@ body { margin: 0; background: var(--canvas); color: var(--text); font: 15px/1.5 
 .shell { max-width: 1440px; margin: auto; padding: 0 3rem 4rem; }
 .app-header { display: flex; align-items: center; justify-content: space-between; padding: 0.8rem 0; border-bottom: 1px solid var(--line); margin-bottom: 1rem; }
 .brand { color: var(--text); text-decoration: none; font-size: 1.5rem; font-weight: 750; letter-spacing: -0.05em; }
+.header-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.header-actions [aria-current="page"] { border-color: var(--accent); color: var(--accent); }
 h1, h2, h3, p { margin-top: 0; }
 h1 { font-size: clamp(2rem, 4vw, 3rem); font-weight: 600; line-height: 1.15; letter-spacing: -0.045em; margin-bottom: 0.7rem; }
 h2 { font-size: 1.05rem; margin-bottom: 0.75rem; }
@@ -90,6 +92,14 @@ details[open] > summary { color: var(--accent); }
 .area-create { margin-top: 1rem; padding-top: 0.7rem; border-top: 1px solid var(--line); }
 .group-create { margin-top: 0.7rem; }
 .empty-state { padding: 2.5rem 1.5rem; text-align: center; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); }
+.activity-page { margin: 2rem 0; }
+.activity-timeline { list-style: none; margin: 2rem 0 0; padding: 0 0 0 1.5rem; border-left: 2px solid var(--line); }
+.activity-entry { position: relative; display: grid; grid-template-columns: minmax(190px, 0.8fr) minmax(0, 2fr) minmax(150px, 0.7fr); gap: 0.5rem 1.5rem; align-items: start; padding: 1rem 1.5rem; border-bottom: 1px solid var(--line); }
+.activity-entry::before { content: ""; position: absolute; left: -1.94rem; top: 1.4rem; width: 0.75rem; height: 0.75rem; border-radius: 50%; background: var(--accent); }
+.activity-entry time { color: var(--muted); font-size: 0.85rem; }
+.activity-entry h2 { margin: 0; overflow-wrap: anywhere; }
+.activity-entry p { margin: 0; }
+.activity-entry .completion-note { grid-column: 2 / -1; white-space: pre-wrap; padding: 0.65rem 0.9rem; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
 button:disabled, input:disabled, select:disabled { opacity: 0.6; cursor: wait; }
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 @media (max-width: 1100px) {
@@ -107,6 +117,8 @@ button:disabled, input:disabled, select:disabled { opacity: 0.6; cursor: wait; }
   .search { min-width: 0; width: 55%; }
   .settings-form { grid-template-columns: 1fr; }
   .task-card { padding: 1rem; }
+  .activity-entry { grid-template-columns: 1fr; gap: 0.25rem; padding: 1rem 0.5rem 1rem 0.75rem; }
+  .activity-entry .completion-note { grid-column: 1; margin-top: 0.5rem; }
 }
 @media (prefers-reduced-motion: no-preference) {
   html { scroll-behavior: smooth; }
