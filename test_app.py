@@ -74,6 +74,166 @@ class MutationApiTest(unittest.TestCase):
             headers={"Accept": "application/json"},
         )
 
+    def create_profile(self, name="Jordan", slug="jordan"):
+        response = self.post_json("/profiles", {"name": name, "slug": slug})
+        self.assertEqual(response.status_code, 200)
+        return response.get_json()["profile"]
+
+    def test_profile_views_include_own_and_global_tasks(self):
+        jordan = self.create_profile()
+        alex = self.create_profile("Alex", "alex")
+        global_task = self.post_json("/tasks", {"name": "Shared chore"}).get_json()["task"]
+        jordan_task = self.post_json("/tasks", {"name": "Jordan chore", "profile_id": jordan["id"]}).get_json()["task"]
+        alex_task = self.post_json("/tasks", {"name": "Alex chore", "profile_id": alex["id"]}).get_json()["task"]
+        for path, included, excluded in (
+            ("/", [global_task, jordan_task, alex_task], []),
+            ("/jordan", [global_task, jordan_task], [alex_task]),
+            ("/alex", [global_task, alex_task], [jordan_task]),
+        ):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 200)
+                html = response.get_data(as_text=True)
+                for task in included:
+                    self.assertIn(f'data-task-id="{task["id"]}"', html)
+                for task in excluded:
+                    self.assertNotIn(f'data-task-id="{task["id"]}"', html)
+                self.assertIn('class="profile-badge">Global</span>', html)
+        self.assertEqual(self.client.get("/unknown-profile").status_code, 404)
+        self.assertEqual(self.client.get("/activity").status_code, 200)
+
+    def test_profile_form_defaults_and_html_redirects(self):
+        profile = self.create_profile()
+        profile_html = self.client.get("/jordan").get_data(as_text=True)
+        all_html = self.client.get("/").get_data(as_text=True)
+        self.assertIn(f'<option value="{profile["id"]}" selected>Jordan</option>', profile_html)
+        self.assertIn('<option value="" selected>Global</option>', all_html)
+        response = self.client.post("/tasks", data={
+            "_csrf_token": "test-csrf-token", "name": "New chore",
+            "profile_id": profile["id"], "view_profile": "jordan",
+        })
+        self.assertEqual(response.location, "/jordan")
+        with app.app_context():
+            task_id = get_db().execute("SELECT id FROM tasks WHERE name = 'New chore'").fetchone()["id"]
+        for action in ("complete", "move", "settings"):
+            response = self.client.post(f"/tasks/{task_id}/{action}", data={
+                "_csrf_token": "test-csrf-token", "view_profile": "jordan", "group_id": "1",
+            })
+            self.assertEqual(response.location, "/jordan")
+        response = self.client.post("/groups", data={
+            "_csrf_token": "test-csrf-token", "name": "Home", "view_profile": "https://evil.test",
+        })
+        self.assertEqual(response.location, "/")
+
+    def test_profile_reassignment_preserves_completion_history(self):
+        jordan = self.create_profile()
+        alex = self.create_profile("Alex", "alex")
+        task = self.post_json("/tasks", {"name": "Chore", "profile_id": jordan["id"]}).get_json()["task"]
+        self.post_json(f'/tasks/{task["id"]}/complete', {"note": "Done once"})
+        settings_path = f'/tasks/{task["id"]}/settings'
+        unchanged = self.post_json(settings_path, {}).get_json()["task"]
+        self.assertEqual(unchanged["profile_id"], jordan["id"])
+        reassigned = self.post_json(settings_path, {"profile_id": alex["id"]}).get_json()["task"]
+        self.assertEqual(reassigned["profile_name"], "Alex")
+        self.assertEqual(reassigned["completion_count"], 1)
+        self.assertNotIn(f'data-task-id="{task["id"]}"', self.client.get("/jordan").get_data(as_text=True))
+        global_task = self.post_json(settings_path, {"profile_id": ""}).get_json()["task"]
+        self.assertIsNone(global_task["profile_id"])
+        self.assertIsNone(global_task["profile_name"])
+        for path in ("/jordan", "/alex"):
+            self.assertIn(f'data-task-id="{task["id"]}"', self.client.get(path).get_data(as_text=True))
+        self.assertEqual(global_task["completion_history"][0]["note"], "Done once")
+
+    def test_global_completion_is_shared_across_profile_views(self):
+        self.create_profile()
+        self.create_profile("Alex", "alex")
+        task = self.post_json("/tasks", {"name": "Shared chore"}).get_json()["task"]
+        for slug in ("jordan", "alex"):
+            response = self.client.post(f'/tasks/{task["id"]}/complete', data={
+                "_csrf_token": "test-csrf-token", "view_profile": slug, "note": f"Done by {slug}",
+            }, follow_redirects=True)
+            self.assertEqual(response.status_code, 200)
+        for slug in ("jordan", "alex"):
+            html = self.client.get(f"/{slug}").get_data(as_text=True)
+            self.assertIn("History (2)", html)
+            self.assertIn("Done by jordan", html)
+            self.assertIn("Done by alex", html)
+        with app.app_context():
+            self.assertEqual(get_db().execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 1)
+
+    def test_profile_validation_and_slug_generation(self):
+        generated = self.post_json("/profiles", {"name": "Jordán Melin"})
+        self.assertEqual(generated.get_json()["profile"]["slug"], "jordan-melin")
+        self.assertEqual(generated.get_json()["profile"]["url"], "/jordan-melin")
+        for slug in ("activity", "tasks", "groups", "profiles", "admin", "email-actions", "static", "global", "UPPER", "../bad", "two--hyphens", "-leading", "trailing-", "1start", "long" * 21):
+            with self.subTest(slug=slug):
+                self.assertEqual(self.post_json("/profiles", {"name": "Invalid", "slug": slug}).status_code, 400)
+        self.assertEqual(self.post_json("/profiles", {"name": ""}).status_code, 400)
+        self.assertEqual(self.post_json("/profiles", {"name": "Other", "slug": "jordan-melin"}).status_code, 409)
+        response = self.client.post("/profiles", data={"name": "No CSRF"}, headers={"Accept": "application/json"})
+        self.assertEqual(response.status_code, 400)
+
+    def test_invalid_task_profiles_do_not_change_tasks(self):
+        profile = self.create_profile()
+        task = self.post_json("/tasks", {"name": "Chore", "profile_id": profile["id"]}).get_json()["task"]
+        for value in ("999", "-1", "invalid", "1.0", "1 OR 1=1", "١"):
+            with self.subTest(value=value):
+                self.assertEqual(self.post_json("/tasks", {"name": "Invalid chore", "profile_id": value}).status_code, 400)
+                self.assertEqual(self.post_json(f'/tasks/{task["id"]}/settings', {"profile_id": value}).status_code, 400)
+        with app.app_context():
+            self.assertEqual(task_payload(get_db(), task["id"])["profile_id"], profile["id"])
+            self.assertEqual(get_db().execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 1)
+
+    def test_delete_profile_requires_confirmation_and_makes_tasks_global(self):
+        profile = self.create_profile()
+        self.create_profile("Alex", "alex")
+        task = self.post_json("/tasks", {"name": "Chore", "profile_id": profile["id"]}).get_json()["task"]
+        self.post_json(f'/tasks/{task["id"]}/complete', {"note": "Keep this history"})
+        path = f'/profiles/{profile["id"]}/delete'
+        self.assertEqual(self.post_json(path, {}).status_code, 400)
+        self.assertEqual(self.client.get("/jordan").status_code, 200)
+        self.assertEqual(self.post_json(path, {"confirm_global": "1"}).location, "/")
+        self.assertEqual(self.client.get("/jordan").status_code, 404)
+        self.assertIn("Keep this history", self.client.get("/alex").get_data(as_text=True))
+        with app.app_context():
+            restored = task_payload(get_db(), task["id"])
+            self.assertIsNone(restored["profile_id"])
+            self.assertEqual(restored["completion_count"], 1)
+        self.assertEqual(self.post_json(path, {"confirm_global": "1"}).status_code, 404)
+
+    def test_snapshot_preserves_profiles_and_assignments(self):
+        profile = self.create_profile()
+        task = self.post_json("/tasks", {"name": "Chore", "profile_id": profile["id"]}).get_json()["task"]
+        self.post_json(f'/tasks/{task["id"]}/complete', {"note": "Keep this history"})
+        with app.app_context():
+            db = get_db()
+            snapshot = export_snapshot(db)
+            self.assertEqual(snapshot["profiles"], [{"id": profile["id"], "name": "Jordan", "slug": "jordan"}])
+            self.assertTrue(restore_snapshot(db, snapshot))
+            self.assertEqual(task_payload(db, task["id"])["profile_id"], profile["id"])
+            self.assertEqual(task_payload(db, task["id"])["completion_count"], 1)
+            for invalid in (None, [{"id": 1, "name": "Invalid", "slug": "admin"}], []):
+                with self.subTest(invalid=invalid):
+                    self.assertFalse(restore_snapshot(db, {**snapshot, "profiles": invalid}))
+                    self.assertEqual(task_payload(db, task["id"])["profile_id"], profile["id"])
+            snapshot.pop("profiles")
+            for saved_task in snapshot["tasks"]:
+                saved_task.pop("profile_id")
+            self.assertTrue(restore_snapshot(db, snapshot))
+            self.assertIsNone(task_payload(db, task["id"])["profile_id"])
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM profiles").fetchone()[0], 0)
+
+    def test_full_wipe_includes_profiles_in_backup_and_removes_them(self):
+        profile = self.create_profile()
+        self.post_json("/tasks", {"name": "Chore", "profile_id": profile["id"]})
+        with patch.dict(app.config, {"ADMIN_SLUG": "test-admin"}), patch("app.create_backup") as backup:
+            response = self.post_json("/admin/test-admin/wipe", {})
+            self.assertEqual(response.status_code, 302)
+            backup.assert_called_once()
+        with app.app_context():
+            self.assertEqual(get_db().execute("SELECT COUNT(*) FROM profiles").fetchone()[0], 0)
+            self.assertEqual(get_db().execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 0)
+
     def test_task_actions_return_updated_task_state(self):
         group_response = self.post_json("/groups", {"name": "Home"})
         self.assertEqual(group_response.status_code, 200)
@@ -436,6 +596,8 @@ class MutationApiTest(unittest.TestCase):
         self.assertIsNone(task["due_soon_lead_days"])
         self.assertFalse(task["is_paused"])
         self.assertFalse(task["reminders_enabled"])
+        self.assertIsNone(task["profile_id"])
+        self.assertIsNone(task["profile_name"])
 
     def test_enhanced_submission_serializes_before_disabling_controls(self):
         script = (Path(__file__).parent / "static" / "app.js").read_text()

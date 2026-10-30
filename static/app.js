@@ -3,9 +3,21 @@ const status = document.querySelector(".status");
 let statusTimeout;
 let activeFilter = "all";
 const search = document.querySelector("#task-search");
+const activeProfileId = document.body.dataset.profileId;
 
 function refreshDashboard() {
   const cards = [...taskGroups.querySelectorAll(".task-card")];
+  if (cards.length === 0 && !document.querySelector("#empty-tasks")) {
+    const empty = document.createElement("section");
+    empty.id = "empty-tasks";
+    empty.className = "empty-state";
+    const title = document.createElement("h2");
+    title.textContent = activeProfileId ? "No tasks for this profile" : "No tasks yet";
+    const message = document.createElement("p");
+    message.textContent = "Add something you do repeatedly. Cadence will learn its rhythm as you complete it.";
+    empty.append(title, message);
+    taskGroups.append(empty);
+  }
   const query = search.value.trim().toLocaleLowerCase();
   let visible = 0;
   document.querySelectorAll("[data-count]").forEach((counter) => {
@@ -106,6 +118,20 @@ function taskSettings(task) {
   form.method = "post";
   form.action = `/tasks/${task.id}/settings`;
   form.dataset.asyncAction = "settings";
+  const profileLabel = document.createElement("label");
+  profileLabel.textContent = "Profile";
+  const profileSelect = document.createElement("select");
+  profileSelect.name = "profile_id";
+  for (const source of document.querySelector("#new-task-profile").options) {
+    const option = source.cloneNode(true);
+    option.selected = option.value === String(task.profile_id ?? "");
+    profileSelect.append(option);
+  }
+  profileLabel.append(profileSelect);
+  const profileHelp = document.createElement("p");
+  profileHelp.className = "field-help";
+  profileHelp.textContent = "Global tasks appear in every profile and share one completion history.";
+  form.append(profileLabel, profileHelp);
   const submit = document.createElement("button");
   submit.type = "submit";
   submit.textContent = "Save settings";
@@ -163,7 +189,10 @@ function taskCard(task) {
   completed.className = "task-subtitle";
   completed.textContent = task.completed_ago;
   heading.append(name, completed);
-  top.append(heading);
+  const profileBadge = document.createElement("span");
+  profileBadge.className = "profile-badge";
+  profileBadge.textContent = task.profile_name || "Global";
+  top.append(heading, profileBadge);
   card.append(top);
   const timing = document.createElement("div");
   timing.className = "task-timing";
@@ -298,6 +327,13 @@ function updateGroupCount(section) {
 
 function upsertTask(task) {
   const existing = taskGroups.querySelector(`[data-task-id="${task.id}"]`);
+  if (activeProfileId && task.profile_id !== null && String(task.profile_id) !== activeProfileId) {
+    const hadFocus = existing?.contains(document.activeElement);
+    existing?.remove();
+    refreshDashboard();
+    if (hadFocus) document.querySelector(`[data-filter="${activeFilter}"]`).focus();
+    return;
+  }
   const previousSection = existing?.closest(".group-section");
   const section = taskGroups.querySelector(`[data-group-id="${task.group_id}"]`) || ensureGroup({ id: task.group_id, name: task.group_name });
   const card = taskCard(task);
@@ -323,6 +359,7 @@ function upsertTask(task) {
 
 async function submitAsync(form) {
   const formData = new FormData(form);
+  formData.set("view_profile", document.body.dataset.profileSlug);
   const controls = form.querySelectorAll("button, input, select");
   controls.forEach((control) => (control.disabled = true));
   try {
@@ -342,6 +379,10 @@ document.addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
     const result = await submitAsync(form);
+    if (form.dataset.asyncAction === "create-profile") {
+      window.location.assign(result.profile.url);
+      return;
+    }
     if (form.dataset.asyncAction === "create-group") {
       if (!result.created) return announce("That area already exists.", true);
       ensureGroup(result.group);

@@ -1,13 +1,21 @@
+{% macro form_fields() -%}
+<input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" />
+<input type="hidden" name="view_profile" value="{{ active_profile['slug'] if active_profile else '' }}" />
+{%- endmacro %}
+{% macro profile_options(selected_id) -%}
+<option value="" {% if selected_id is none %}selected{% endif %}>Global</option>
+{% for profile in profiles %}<option value="{{ profile['id'] }}" {% if profile['id'] == selected_id %}selected{% endif %}>{{ profile['name'] }}</option>{% endfor %}
+{%- endmacro %}
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Cadence · Task dashboard</title>
+    <title>Cadence · {{ active_profile['name'] if active_profile else 'All profiles' }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}" />
     <script src="{{ url_for('static', filename='app.js') }}" defer></script>
   </head>
-  <body>
+  <body data-profile-id="{{ active_profile['id'] if active_profile else '' }}" data-profile-slug="{{ active_profile['slug'] if active_profile else '' }}">
     <div class="shell">
       <header class="app-header">
         <a class="brand" href="/">Cadence</a>
@@ -17,6 +25,11 @@
         </nav>
       </header>
       <main>
+        <nav class="profile-nav" aria-label="Profiles">
+          <a class="button" href="{{ url_for('index') }}" {% if not active_profile %}aria-current="page"{% endif %}>All profiles</a>
+          {% for profile in profiles %}<a class="button" href="{{ url_for('index', profile_slug=profile['slug']) }}" {% if active_profile and active_profile['id'] == profile['id'] %}aria-current="page"{% endif %}>{{ profile['name'] }}</a>{% endfor %}
+        </nav>
+        {% if active_profile %}<p class="meta">{{ active_profile['name'] }}'s tasks and global tasks. Global completions are shared by everyone.</p>{% endif %}
         <nav class="summary-grid" aria-label="Filter tasks by status" hidden>
           {% for value, label in [('all', 'All tasks'), ('overdue', 'Overdue'), ('due_soon', 'Due soon'), ('scheduled', 'On track'), ('learning', 'Getting started'), ('off_season', 'Off season'), ('paused', 'Paused')] %}
           <button type="button" class="summary-tile {{ value }}" data-filter="{{ value }}" aria-pressed="{{ 'true' if value == 'all' else 'false' }}"><span>{{ label }}</span><strong data-count="{{ value }}">0</strong></button>
@@ -37,20 +50,22 @@
                 <ul class="task-list">
                   {% for task in section['tasks'] %}
                   <li class="task-card" data-task-id="{{ task['id'] }}" data-status="{{ task['dashboard_status'] }}" data-name="{{ task['name'] }}" data-due-at="{{ task['cadence']['due_at'] or '' }}" tabindex="-1">
-                    <div class="task-top"><h3>{{ task['name'] }}</h3><div class="task-subtitle">{{ task['completed_ago'] }}</div></div>
+                    <div class="task-top"><div><h3>{{ task['name'] }}</h3><div class="task-subtitle">{{ task['completed_ago'] }}</div></div><span class="profile-badge">{{ task['profile_name'] or 'Global' }}</span></div>
                     <div class="task-timing"><p class="cadence {{ task['dashboard_status'] }}">{{ task['due_summary'] }}</p><span class="schedule-summary">{{ task['schedule_summary'] }}</span></div>
-                    <form class="quick-complete" action="{{ url_for('complete_task', task_id=task['id']) }}" method="post" data-async-action="complete"><input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" /><button type="submit" aria-label="Complete {{ task['name'] }}">✓ Complete</button></form>
+                    <form class="quick-complete" action="{{ url_for('complete_task', task_id=task['id']) }}" method="post" data-async-action="complete">{{ form_fields() }}<button type="submit" aria-label="Complete {{ task['name'] }}">✓ Complete</button></form>
                     <details class="task-details"><summary>Details</summary>
                       <div class="detail-content">
                         <p class="meta">Last completed: {{ task['last_completed_display'] }}</p>
                         <p class="meta">{{ task['cadence']['message'] or 'Complete this task three times to learn its repeat interval.' }}</p>
                         <div class="task-actions">
-                          <form action="{{ url_for('complete_task', task_id=task['id']) }}" method="post" data-async-action="complete"><input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" /><label>Completion note<input type="text" name="note" maxlength="500" placeholder="What did you do?" aria-label="Completion note for {{ task['name'] }}" /></label><button type="submit">Complete with note</button></form>
-                          <form action="{{ url_for('move_task', task_id=task['id']) }}" method="post" data-async-action="move"><input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" /><label>Area<select name="group_id" aria-label="Move {{ task['name'] }}">{% for group in groups %}<option value="{{ group['id'] }}" {% if group['id'] == task['group_id'] %}selected{% endif %}>{{ group['name'] }}</option>{% endfor %}</select></label><button type="submit">Move</button></form>
+                          <form action="{{ url_for('complete_task', task_id=task['id']) }}" method="post" data-async-action="complete">{{ form_fields() }}<label>Completion note<input type="text" name="note" maxlength="500" placeholder="What did you do?" aria-label="Completion note for {{ task['name'] }}" /></label><button type="submit">Complete with note</button></form>
+                          <form action="{{ url_for('move_task', task_id=task['id']) }}" method="post" data-async-action="move">{{ form_fields() }}<label>Area<select name="group_id" aria-label="Move {{ task['name'] }}">{% for group in groups %}<option value="{{ group['id'] }}" {% if group['id'] == task['group_id'] %}selected{% endif %}>{{ group['name'] }}</option>{% endfor %}</select></label><button type="submit">Move</button></form>
                         </div>
                         <details class="task-settings"><summary>Schedule &amp; reminders</summary>
                           <form class="settings-form" action="{{ url_for('update_task_settings', task_id=task['id']) }}" method="post" data-async-action="settings">
-                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" />
+                            {{ form_fields() }}
+                            <label>Profile<select name="profile_id">{{ profile_options(task['profile_id']) }}</select></label>
+                            <p class="field-help">Global tasks appear in every profile and share one completion history.</p>
                             <p class="field-help">Leave the repeat interval empty to use your completion history. A manual interval starts after a completion.</p>
                             <label>Repeat every, in days<input type="number" name="manual_interval_days" min="0.1" max="3650" step="0.1" placeholder="Automatic" value="{% if task['manual_interval_days'] is not none %}{{ task['manual_interval_days'] }}{% endif %}" /></label>
                             <label>Show as due soon, days before<input type="number" name="due_soon_lead_days" min="1" max="365" placeholder="Automatic" value="{% if task['due_soon_lead_days'] is not none %}{{ task['due_soon_lead_days'] }}{% endif %}" /></label>
@@ -75,7 +90,7 @@
                 </ul>
               </section>
               {% else %}
-              <section class="empty-state" id="empty-tasks"><h2>Start with one recurring task</h2><p>Add something you do repeatedly. Cadence will learn its rhythm as you complete it.</p></section>
+              <section class="empty-state" id="empty-tasks"><h2>No tasks{{ ' for this profile' if active_profile else ' yet' }}</h2><p>Add something you do repeatedly. Cadence will learn its rhythm as you complete it.</p></section>
               {% endfor %}
             </div>
             <section id="no-results" class="empty-state" hidden><h2>No matching tasks</h2><p>Try another search or status filter.</p><button type="button" id="clear-filters">Show all tasks</button></section>
@@ -85,14 +100,32 @@
             <section class="quick-add" id="add-task" aria-labelledby="add-title">
               <h2 id="add-title">Add a task</h2>
               <form class="add-grid" action="{{ url_for('create_task') }}" method="post" data-async-action="create-task">
-                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" />
+                {{ form_fields() }}
                 <label>Task name<input type="text" name="name" placeholder="What needs doing?" maxlength="{{ config['MAX_NAME_LENGTH'] }}" required /></label>
                 <label>Area<select id="new-task-group" name="group_id">{% for group in groups %}<option value="{{ group['id'] }}">{{ group['name'] }}</option>{% endfor %}</select></label>
+                <label>Profile<select id="new-task-profile" name="profile_id">{{ profile_options(active_profile['id'] if active_profile else none) }}</select></label>
                 <label>Repeat every, in days<input type="number" name="manual_interval_days" min="0.1" max="3650" step="0.1" placeholder="Automatic" aria-describedby="repeat-help" /></label>
                 <p class="field-help" id="repeat-help">Optional. Leave empty to learn from completions.</p>
                 <button class="primary" type="submit">Add task</button>
               </form>
-              <details class="area-create"><summary>Create an area</summary><form class="group-create" action="{{ url_for('create_group') }}" method="post" data-async-action="create-group"><input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" /><label>Area name<input type="text" name="name" placeholder="e.g. Home" maxlength="{{ config['MAX_NAME_LENGTH'] }}" required /></label><button type="submit">Add area</button></form></details>
+              <details class="area-create"><summary>Create an area</summary><form class="group-create" action="{{ url_for('create_group') }}" method="post" data-async-action="create-group">{{ form_fields() }}<label>Area name<input type="text" name="name" placeholder="e.g. Home" maxlength="{{ config['MAX_NAME_LENGTH'] }}" required /></label><button type="submit">Add area</button></form></details>
+              <details class="area-create"><summary>Create a profile</summary>
+                <form class="group-create" action="{{ url_for('create_profile') }}" method="post" data-async-action="create-profile">
+                  {{ form_fields() }}
+                  <label>Profile name<input type="text" name="name" maxlength="{{ config['MAX_NAME_LENGTH'] }}" placeholder="e.g. Jordan" required /></label>
+                  <label>URL slug<input type="text" name="slug" maxlength="80" pattern="[a-z][a-z0-9]*(-[a-z0-9]+)*" placeholder="jordan" /></label>
+                  <p class="field-help">Leave the URL slug empty to use the name. Profiles filter tasks, but do not make them private.</p>
+                  <button type="submit">Add profile</button>
+                </form>
+              </details>
+              {% if active_profile %}<details class="area-create"><summary>Delete this profile</summary>
+                <form class="group-create" action="{{ url_for('delete_profile', profile_id=active_profile['id']) }}" method="post">
+                  {{ form_fields() }}
+                  <p class="field-help">Deleting {{ active_profile['name'] }} makes its tasks global. Tasks and completion history stay intact.</p>
+                  <label class="checkbox"><input type="checkbox" name="confirm_global" value="1" required />I understand these tasks will appear in every profile.</label>
+                  <button type="submit">Delete profile</button>
+                </form>
+              </details>{% endif %}
             </section>
           </aside>
         </div>

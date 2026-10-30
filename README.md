@@ -25,6 +25,30 @@ The dashboard shows each task's due status and time since its last completion. S
 Tasks appear by area, sorted by name A–Z within each area. Search, filters, and updates without a page reload require JavaScript.
 Task forms and expandable details also work without JavaScript.
 
+### Profiles
+
+Each task can have one profile. Tasks without a profile are global.
+
+- Open `/` to see all tasks.
+- Open a profile URL, such as `/jordan`, to see that profile's tasks and all global tasks.
+- Select a profile above the dashboard to switch views. Search and status filters apply within that view.
+- Open **Create a profile** to add a name and URL slug. Leave the slug empty to generate it from the name.
+- New tasks default to the current profile. In **All profiles**, new tasks default to **Global**.
+- To change a task's profile, open **Details**, then **Schedule & reminders**. Select a profile or **Global** and save.
+
+Global tasks share one schedule and completion history. Completing a global task updates it for everyone.
+Profiles filter tasks. They are not accounts and do not restrict access.
+The Activity page and reminder emails still include all profiles. Profiles do not change reminder recipients.
+
+Profile URLs use lowercase letters, numbers, and single hyphens. Each slug starts with a letter and has at most 80 characters.
+Slugs must be unique. Application paths, such as `activity`, `tasks`, and `admin`, are reserved. Unknown profile URLs return 404.
+
+To delete a profile, open its dashboard and expand **Delete this profile**. Confirm that its tasks will become global.
+Deleting a profile keeps its tasks and completion history.
+
+Existing tasks become global when the database upgrades. Backups include profiles and task assignments.
+Restoring an older backup without profiles makes its tasks global. A full wipe also deletes profiles.
+
 ### Repeat intervals
 
 Automatic scheduling is the default. Cadence uses the median interval between completions after at least three completions with distinct times.
