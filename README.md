@@ -37,6 +37,18 @@ Each completion starts the next interval. Reminder emails use this schedule when
 
 To return to automatic scheduling, clear the repeat interval and select **Save settings**. Cadence keeps the completion history.
 
+### Seasonal tasks
+
+Open **Details**, then **Schedule & reminders**. Under **Active months**, select the months when you do the task. Select **Save settings**.
+
+For a summer task, select June, July, and August. Select all months for a year-round task. At least one month must remain selected.
+
+Outside its active months, a task shows **Off season**. It is not due soon or overdue. It sends no individual reminders and does not appear in reminder digests.
+
+Month changes use `USER_TIMEZONE`. During active months, the normal schedule resumes from the last completion. A task can become overdue when its season starts.
+
+You can still complete a task outside its active months. Existing tasks and older backups default to all months. Backups include each task's active months.
+
 ## Requirements
 
 - Python 3.10 or later.

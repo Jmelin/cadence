@@ -5,6 +5,7 @@ import hashlib
 import secrets
 import sqlite3
 import smtplib
+from calendar import month_name
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from html import escape
@@ -23,6 +24,13 @@ MIN_COMPLETIONS_FOR_CADENCE = 3
 MAX_CADENCE_INTERVAL_DAYS = 3650
 MAX_DUE_SOON_LEAD_DAYS = 365
 MAX_COMPLETION_NOTE_LENGTH = 500
+ALL_MONTHS = "1,2,3,4,5,6,7,8,9,10,11,12"
+
+
+def parse_active_months(values: list[str]) -> list[int]:
+    if not values or any(value not in ALL_MONTHS.split(",") for value in values):
+        raise ValueError("Choose at least one active month from January through December.")
+    return sorted({int(value) for value in values})
 
 
 def load_env_file(path: Path) -> None:
@@ -142,7 +150,13 @@ def cadence_insight(
     due_soon_lead_days: Optional[int] = None,
     is_paused: bool = False,
     now: Optional[datetime] = None,
+    active_months: Optional[list[int]] = None,
 ) -> dict:
+    now = now or datetime.now(timezone.utc)
+    in_season = (
+        active_months is None
+        or now.astimezone(app.config["DISPLAY_TIMEZONE"]).month in active_months
+    )
     insight = {
         "status": None,
         "interval_days": None,
@@ -150,9 +164,13 @@ def cadence_insight(
         "due_display": None,
         "message": None,
         "source": None,
+        "in_season": in_season,
     }
     if is_paused:
         insight["message"] = "Paused"
+        return insight
+    if not in_season:
+        insight["message"] = "Off season. Due status and reminder emails resume during active months."
         return insight
     if manual_interval_days is not None:
         if not history:
@@ -191,7 +209,6 @@ def cadence_insight(
     if any(timestamp is None for timestamp in completion_times):
         return insight
     due_at = completion_times[0] + timedelta(days=interval_days)
-    now = now or datetime.now(timezone.utc)
     lead_days = (
         due_soon_lead_days
         or app.config["DEFAULT_DUE_SOON_LEAD_DAYS"]
@@ -251,16 +268,19 @@ def enrich_task(task: dict, history: list, now: Optional[datetime] = None) -> di
     task["group_name"] = task["group_name"] or "Ungrouped"
     task["is_paused"] = bool(task["is_paused"])
     task["reminders_enabled"] = bool(task["reminders_enabled"])
+    task["active_months"] = parse_active_months(task.get("active_months", ALL_MONTHS).split(","))
     task["cadence"] = cadence_insight(
         timestamps,
         manual_interval_days=task["manual_interval_days"],
         due_soon_lead_days=task["due_soon_lead_days"],
         is_paused=task["is_paused"],
         now=now,
+        active_months=task["active_months"],
     )
     cadence = task["cadence"]
     task["dashboard_status"] = (
-        "paused" if task["is_paused"] else cadence["status"]
+        "paused" if task["is_paused"] else
+        "off_season" if not cadence["in_season"] else cadence["status"]
         or ("scheduled" if cadence["due_at"] else "learning")
     )
     if cadence["due_at"]:
@@ -276,12 +296,16 @@ def enrich_task(task: dict, history: list, now: Optional[datetime] = None) -> di
     else:
         task["due_summary"] = (
             "Paused" if task["is_paused"] else
+            "Off season" if not cadence["in_season"] else
             "Complete once to start" if task["manual_interval_days"] else "Learning your routine"
         )
     task["schedule_summary"] = (
         f"Every {format_interval_days(task['manual_interval_days'])} · Manual"
         if task["manual_interval_days"] else "Automatic schedule"
     )
+    if len(task["active_months"]) < 12:
+        months = ", ".join(month_name[month][:3] for month in task["active_months"])
+        task["schedule_summary"] += f" · Active {months}"
     return task
 
 
@@ -300,7 +324,7 @@ def task_payload(db: sqlite3.Connection, task_id: int) -> Optional[dict]:
         """
         SELECT tasks.id, tasks.name, tasks.created_at, tasks.last_completed_at,
                tasks.group_id, tasks.manual_interval_days, tasks.due_soon_lead_days,
-               tasks.is_paused, tasks.reminders_enabled, groups.name AS group_name
+               tasks.is_paused, tasks.reminders_enabled, tasks.active_months, groups.name AS group_name
         FROM tasks
         LEFT JOIN groups ON groups.id = tasks.group_id
         WHERE tasks.id = ?
@@ -343,7 +367,7 @@ def reminder_tasks(db: sqlite3.Connection, now: datetime) -> list[dict]:
         """
         SELECT tasks.id, tasks.name, tasks.created_at, tasks.last_completed_at,
                tasks.group_id, tasks.manual_interval_days, tasks.due_soon_lead_days,
-               tasks.is_paused, tasks.reminders_enabled, groups.name AS group_name
+               tasks.is_paused, tasks.reminders_enabled, tasks.active_months, groups.name AS group_name
         FROM tasks
         LEFT JOIN groups ON groups.id = tasks.group_id
         WHERE tasks.reminders_enabled = 1 AND tasks.is_paused = 0
@@ -703,7 +727,7 @@ def export_snapshot(db: sqlite3.Connection) -> dict:
         for row in db.execute(
             """
             SELECT id, name, created_at, last_completed_at, group_id,
-                   manual_interval_days, due_soon_lead_days, is_paused, reminders_enabled
+                   manual_interval_days, due_soon_lead_days, is_paused, reminders_enabled, active_months
             FROM tasks
             ORDER BY id ASC
             """
@@ -828,13 +852,17 @@ def restore_snapshot(db: sqlite3.Connection, snapshot: dict) -> bool:
             task_name = task.get("name")
             if not isinstance(task_name, str):
                 raise ValueError("Invalid task name")
+            active_months = task.get("active_months", ALL_MONTHS)
+            if not isinstance(active_months, str):
+                raise ValueError("Invalid active months")
+            active_months = ",".join(str(month) for month in parse_active_months(active_months.split(",")))
             db.execute(
                 """
                 INSERT INTO tasks (
                     id, name, created_at, last_completed_at, group_id,
-                    manual_interval_days, due_soon_lead_days, is_paused, reminders_enabled
+                    manual_interval_days, due_soon_lead_days, is_paused, reminders_enabled, active_months
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task.get("id"),
@@ -846,6 +874,7 @@ def restore_snapshot(db: sqlite3.Connection, snapshot: dict) -> bool:
                     task.get("due_soon_lead_days"),
                     int(bool(task.get("is_paused", False))),
                     int(bool(task.get("reminders_enabled", False))),
+                    active_months,
                 ),
             )
         for completion in task_completions:
@@ -950,7 +979,8 @@ def init_db() -> None:
             manual_interval_days REAL,
             due_soon_lead_days INTEGER,
             is_paused INTEGER NOT NULL DEFAULT 0,
-            reminders_enabled INTEGER NOT NULL DEFAULT 0
+            reminders_enabled INTEGER NOT NULL DEFAULT 0,
+            active_months TEXT NOT NULL DEFAULT '1,2,3,4,5,6,7,8,9,10,11,12'
         )
         """
     )
@@ -1005,6 +1035,10 @@ def init_db() -> None:
         db.execute("ALTER TABLE tasks ADD COLUMN is_paused INTEGER NOT NULL DEFAULT 0")
     if "reminders_enabled" not in columns:
         db.execute("ALTER TABLE tasks ADD COLUMN reminders_enabled INTEGER NOT NULL DEFAULT 0")
+    if "active_months" not in columns:
+        db.execute(
+            "ALTER TABLE tasks ADD COLUMN active_months TEXT NOT NULL DEFAULT '1,2,3,4,5,6,7,8,9,10,11,12'"
+        )
     completion_columns = {
         row["name"] for row in db.execute("PRAGMA table_info(task_completions)").fetchall()
     }
@@ -1061,7 +1095,7 @@ def index():
         """
         SELECT tasks.id, tasks.name, tasks.created_at, tasks.last_completed_at,
                tasks.group_id, tasks.manual_interval_days, tasks.due_soon_lead_days,
-               tasks.is_paused, tasks.reminders_enabled, groups.name AS group_name
+               tasks.is_paused, tasks.reminders_enabled, tasks.active_months, groups.name AS group_name
         FROM tasks
         LEFT JOIN groups ON groups.id = tasks.group_id
         ORDER BY groups.name COLLATE NOCASE, tasks.name COLLATE NOCASE
@@ -1115,6 +1149,7 @@ def index():
         groups=groups,
         overdue_tasks=overdue_tasks,
         due_soon_tasks=due_soon_tasks,
+        months=[(month, month_name[month]) for month in range(1, 13)],
     )
 
 
@@ -1222,9 +1257,17 @@ def move_task(task_id: int):
 @app.post("/tasks/<int:task_id>/settings")
 def update_task_settings(task_id: int):
     db = get_db()
-    task = db.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    task = db.execute("SELECT id, active_months FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if not task:
         abort(404)
+
+    try:
+        month_values = request.form.getlist("active_months")
+        if not month_values and "active_months_present" not in request.form:
+            month_values = task["active_months"].split(",")
+        active_months = parse_active_months(month_values)
+    except ValueError as error:
+        return mutation_error(str(error))
 
     manual_interval_raw = request.form.get("manual_interval_days", "")
     manual_interval_days = parse_optional_interval(manual_interval_raw)
@@ -1244,7 +1287,7 @@ def update_task_settings(task_id: int):
         """
         UPDATE tasks
         SET manual_interval_days = ?, due_soon_lead_days = ?, is_paused = ?,
-            reminders_enabled = ?
+            reminders_enabled = ?, active_months = ?
         WHERE id = ?
         """,
         (
@@ -1252,6 +1295,7 @@ def update_task_settings(task_id: int):
             due_soon_lead_days,
             int(request.form.get("is_paused") == "1"),
             int(request.form.get("reminders_enabled") == "1"),
+            ",".join(str(month) for month in active_months),
             task_id,
         ),
     )

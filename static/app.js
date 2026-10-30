@@ -1,5 +1,6 @@
 const taskGroups = document.querySelector("#task-groups");
 const status = document.querySelector(".status");
+let statusTimeout;
 let activeFilter = "all";
 const search = document.querySelector("#task-search");
 
@@ -43,8 +44,13 @@ function csrfToken() {
 }
 
 function announce(message, isError = false) {
+  clearTimeout(statusTimeout);
   status.textContent = message;
   status.classList.toggle("error", isError);
+  statusTimeout = setTimeout(() => {
+    status.textContent = "";
+    status.classList.remove("error");
+  }, 5000);
 }
 
 function groupOptions(select, selectedId) {
@@ -106,6 +112,26 @@ function taskSettings(task) {
   const help = document.createElement("p");
   help.className = "field-help";
   help.textContent = "Leave the repeat interval empty to use your completion history. A manual interval starts after a completion.";
+  const months = document.createElement("fieldset");
+  months.className = "active-months";
+  const monthsPresent = document.createElement("input");
+  monthsPresent.type = "hidden";
+  monthsPresent.name = "active_months_present";
+  monthsPresent.value = "1";
+  const legend = document.createElement("legend");
+  legend.textContent = "Active months";
+  const monthHelp = document.createElement("p");
+  monthHelp.className = "field-help";
+  monthHelp.textContent = "Select at least one month. Outside these months, this task is not due and sends no reminder emails. Select all for year-round tasks.";
+  const options = document.createElement("div");
+  options.className = "month-options";
+  const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  monthNames.forEach((name, index) => {
+    const label = checkboxField(name, "active_months", task.active_months.includes(index + 1));
+    label.querySelector("input").value = String(index + 1);
+    options.append(label);
+  });
+  months.append(legend, monthsPresent, monthHelp, options);
   form.append(
     hiddenToken(),
     help,
@@ -113,6 +139,7 @@ function taskSettings(task) {
     numberField("Show as due soon, days before", "due_soon_lead_days", task.due_soon_lead_days, "1", "365"),
     checkboxField("Pause task", "is_paused", task.is_paused),
     checkboxField("Enable reminder emails", "reminders_enabled", task.reminders_enabled),
+    months,
     submit,
   );
   details.append(summary, form);
