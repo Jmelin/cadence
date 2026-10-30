@@ -33,6 +33,9 @@ body { margin: 0; background: var(--canvas); color: var(--text); font: 15px/1.5 
 .brand { color: var(--text); text-decoration: none; font-size: 1.5rem; font-weight: 750; letter-spacing: -0.05em; }
 .header-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .header-actions [aria-current="page"] { border-color: var(--accent); color: var(--accent); }
+.profile-nav { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
+.profile-nav [aria-current="page"] { border-color: var(--accent); background: var(--accent-soft); }
+.profile-badge { align-self: start; max-width: 45%; padding: 0.15rem 0.5rem; border-radius: 6px; background: var(--surface-muted); color: var(--muted); font-size: 0.75rem; overflow-wrap: anywhere; }
 h1, h2, h3, p { margin-top: 0; }
 h1 { font-size: clamp(2rem, 4vw, 3rem); font-weight: 600; line-height: 1.15; letter-spacing: -0.045em; margin-bottom: 0.7rem; }
 h2 { font-size: 1.05rem; margin-bottom: 0.75rem; }

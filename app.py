@@ -3,8 +3,10 @@ import json
 import hmac
 import hashlib
 import secrets
+import re
 import sqlite3
 import smtplib
+import unicodedata
 from calendar import month_name
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
@@ -25,6 +27,33 @@ MAX_CADENCE_INTERVAL_DAYS = 3650
 MAX_DUE_SOON_LEAD_DAYS = 365
 MAX_COMPLETION_NOTE_LENGTH = 500
 ALL_MONTHS = "1,2,3,4,5,6,7,8,9,10,11,12"
+RESERVED_PROFILE_SLUGS = {"activity", "tasks", "groups", "profiles", "admin", "email-actions", "static", "global"}
+
+
+def valid_profile_slug(slug: str) -> bool:
+    return (
+        len(slug) <= 80
+        and re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", slug) is not None
+        and slug not in RESERVED_PROFILE_SLUGS
+    )
+
+
+def parse_profile_id(db: sqlite3.Connection, value: str) -> Optional[int]:
+    if not value.strip():
+        return None
+    if not value.isascii() or not value.isdecimal():
+        raise ValueError("Choose a valid profile or Global.")
+    profile = db.execute("SELECT id FROM profiles WHERE id = ?", (value,)).fetchone()
+    if not profile:
+        raise ValueError("Choose a valid profile or Global.")
+    return profile["id"]
+
+
+def dashboard_url() -> str:
+    slug = request.form.get("view_profile", "")
+    if slug and get_db().execute("SELECT id FROM profiles WHERE slug = ?", (slug,)).fetchone():
+        return url_for("index", profile_slug=slug)
+    return url_for("index")
 
 
 def parse_active_months(values: list[str]) -> list[int]:
@@ -316,7 +345,7 @@ def wants_json_response() -> bool:
 def mutation_error(message: str, status: int = 400):
     if wants_json_response():
         return jsonify({"error": message}), status
-    return redirect(url_for("index"))
+    return redirect(dashboard_url())
 
 
 def task_payload(db: sqlite3.Connection, task_id: int) -> Optional[dict]:
@@ -324,9 +353,11 @@ def task_payload(db: sqlite3.Connection, task_id: int) -> Optional[dict]:
         """
         SELECT tasks.id, tasks.name, tasks.created_at, tasks.last_completed_at,
                tasks.group_id, tasks.manual_interval_days, tasks.due_soon_lead_days,
-               tasks.is_paused, tasks.reminders_enabled, tasks.active_months, groups.name AS group_name
+               tasks.is_paused, tasks.reminders_enabled, tasks.active_months, groups.name AS group_name,
+               tasks.profile_id, profiles.name AS profile_name
         FROM tasks
         LEFT JOIN groups ON groups.id = tasks.group_id
+        LEFT JOIN profiles ON profiles.id = tasks.profile_id
         WHERE tasks.id = ?
         """,
         (task_id,),
@@ -716,6 +747,7 @@ def ensure_backup_dir() -> Path:
 
 
 def export_snapshot(db: sqlite3.Connection) -> dict:
+    profiles = [dict(row) for row in db.execute("SELECT id, name, slug FROM profiles ORDER BY id")]
     groups = [
         dict(row)
         for row in db.execute(
@@ -727,7 +759,7 @@ def export_snapshot(db: sqlite3.Connection) -> dict:
         for row in db.execute(
             """
             SELECT id, name, created_at, last_completed_at, group_id,
-                   manual_interval_days, due_soon_lead_days, is_paused, reminders_enabled, active_months
+                   manual_interval_days, due_soon_lead_days, is_paused, reminders_enabled, active_months, profile_id
             FROM tasks
             ORDER BY id ASC
             """
@@ -766,6 +798,7 @@ def export_snapshot(db: sqlite3.Connection) -> dict:
     ]
     return {
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "profiles": profiles,
         "groups": groups,
         "tasks": tasks,
         "task_completions": task_completions,
@@ -815,12 +848,14 @@ def restore_snapshot(db: sqlite3.Connection, snapshot: dict) -> bool:
         return False
 
     groups = snapshot.get("groups")
+    profiles = snapshot.get("profiles", [])
     tasks = snapshot.get("tasks")
     task_completions = snapshot.get("task_completions")
     reminder_deliveries = snapshot.get("reminder_deliveries", [])
     email_action_tokens = snapshot.get("email_action_tokens", [])
     if (
         not isinstance(groups, list)
+        or not isinstance(profiles, list)
         or not isinstance(tasks, list)
         or not isinstance(task_completions, list)
         or not isinstance(reminder_deliveries, list)
@@ -835,6 +870,21 @@ def restore_snapshot(db: sqlite3.Connection, snapshot: dict) -> bool:
         db.execute("DELETE FROM task_completions")
         db.execute("DELETE FROM tasks")
         db.execute("DELETE FROM groups")
+        db.execute("DELETE FROM profiles")
+
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                raise ValueError("Invalid profile row")
+            profile_name = profile.get("name")
+            slug = profile.get("slug")
+            if not isinstance(profile_name, str) or not normalize_name(profile_name):
+                raise ValueError("Invalid profile name")
+            if not isinstance(slug, str) or not valid_profile_slug(slug):
+                raise ValueError("Invalid profile URL")
+            db.execute(
+                "INSERT INTO profiles (id, name, slug) VALUES (?, ?, ?)",
+                (profile.get("id"), normalize_name(profile_name), slug),
+            )
 
         for group in groups:
             if not isinstance(group, dict):
@@ -860,9 +910,9 @@ def restore_snapshot(db: sqlite3.Connection, snapshot: dict) -> bool:
                 """
                 INSERT INTO tasks (
                     id, name, created_at, last_completed_at, group_id,
-                    manual_interval_days, due_soon_lead_days, is_paused, reminders_enabled, active_months
+                    manual_interval_days, due_soon_lead_days, is_paused, reminders_enabled, active_months, profile_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task.get("id"),
@@ -875,6 +925,7 @@ def restore_snapshot(db: sqlite3.Connection, snapshot: dict) -> bool:
                     int(bool(task.get("is_paused", False))),
                     int(bool(task.get("reminders_enabled", False))),
                     active_months,
+                    task.get("profile_id"),
                 ),
             )
         for completion in task_completions:
@@ -961,6 +1012,15 @@ def init_db() -> None:
     db = get_db()
     db.execute(
         """
+        CREATE TABLE IF NOT EXISTS profiles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            slug TEXT NOT NULL UNIQUE
+        )
+        """
+    )
+    db.execute(
+        """
         CREATE TABLE IF NOT EXISTS groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE
@@ -980,7 +1040,8 @@ def init_db() -> None:
             due_soon_lead_days INTEGER,
             is_paused INTEGER NOT NULL DEFAULT 0,
             reminders_enabled INTEGER NOT NULL DEFAULT 0,
-            active_months TEXT NOT NULL DEFAULT '1,2,3,4,5,6,7,8,9,10,11,12'
+            active_months TEXT NOT NULL DEFAULT '1,2,3,4,5,6,7,8,9,10,11,12',
+            profile_id INTEGER REFERENCES profiles(id) ON DELETE SET NULL
         )
         """
     )
@@ -1027,6 +1088,9 @@ def init_db() -> None:
     columns = {row["name"] for row in db.execute("PRAGMA table_info(tasks)").fetchall()}
     if "group_id" not in columns:
         db.execute("ALTER TABLE tasks ADD COLUMN group_id INTEGER")
+    if "profile_id" not in columns:
+        db.execute("ALTER TABLE tasks ADD COLUMN profile_id INTEGER REFERENCES profiles(id) ON DELETE SET NULL")
+    db.execute("CREATE INDEX IF NOT EXISTS tasks_profile_id ON tasks (profile_id)")
     if "manual_interval_days" not in columns:
         db.execute("ALTER TABLE tasks ADD COLUMN manual_interval_days REAL")
     if "due_soon_lead_days" not in columns:
@@ -1081,8 +1145,13 @@ def add_security_headers(response):
 
 
 @app.get("/")
-def index():
+@app.get("/<profile_slug>")
+def index(profile_slug: Optional[str] = None):
     db = get_db()
+    profiles = [dict(row) for row in db.execute("SELECT id, name, slug FROM profiles ORDER BY name COLLATE NOCASE, id")]
+    active_profile = next((profile for profile in profiles if profile["slug"] == profile_slug), None)
+    if profile_slug is not None and (not valid_profile_slug(profile_slug) or active_profile is None):
+        abort(404)
     group_rows = db.execute(
         """
         SELECT id, name
@@ -1095,11 +1164,15 @@ def index():
         """
         SELECT tasks.id, tasks.name, tasks.created_at, tasks.last_completed_at,
                tasks.group_id, tasks.manual_interval_days, tasks.due_soon_lead_days,
-               tasks.is_paused, tasks.reminders_enabled, tasks.active_months, groups.name AS group_name
+               tasks.is_paused, tasks.reminders_enabled, tasks.active_months, groups.name AS group_name,
+               tasks.profile_id, profiles.name AS profile_name
         FROM tasks
         LEFT JOIN groups ON groups.id = tasks.group_id
+        LEFT JOIN profiles ON profiles.id = tasks.profile_id
+        WHERE ? IS NULL OR tasks.profile_id = ? OR tasks.profile_id IS NULL
         ORDER BY groups.name COLLATE NOCASE, tasks.name COLLATE NOCASE
-        """
+        """,
+        (active_profile["id"] if active_profile else None,) * 2,
     ).fetchall()
     completion_rows = db.execute(
         """
@@ -1147,6 +1220,8 @@ def index():
         "index.html",
         grouped_tasks=grouped_tasks,
         groups=groups,
+        profiles=profiles,
+        active_profile=active_profile,
         overdue_tasks=overdue_tasks,
         due_soon_tasks=due_soon_tasks,
         months=[(month, month_name[month]) for month in range(1, 13)],
@@ -1186,15 +1261,19 @@ def create_task():
         )
 
     db = get_db()
+    try:
+        profile_id = parse_profile_id(db, request.form.get("profile_id", ""))
+    except ValueError as error:
+        return mutation_error(str(error))
     group_id_raw = request.form.get("group_id", "")
     group_id = get_valid_group_id(db, group_id_raw) or get_default_group_id(db)
     now = datetime.now(timezone.utc).isoformat()
     cursor = db.execute(
         """
-        INSERT OR IGNORE INTO tasks (name, created_at, last_completed_at, group_id, manual_interval_days)
-        VALUES (?, ?, NULL, ?, ?)
+        INSERT OR IGNORE INTO tasks (name, created_at, last_completed_at, group_id, manual_interval_days, profile_id)
+        VALUES (?, ?, NULL, ?, ?, ?)
         """,
-        (name, now, group_id, manual_interval_days),
+        (name, now, group_id, manual_interval_days, profile_id),
     )
     db.commit()
     if wants_json_response():
@@ -1205,6 +1284,39 @@ def create_task():
                 "created": cursor.rowcount == 1,
             }
         )
+    return redirect(dashboard_url())
+
+
+@app.post("/profiles")
+def create_profile():
+    name = normalize_name(request.form.get("name", ""))
+    if not name:
+        return mutation_error("Enter a profile name.")
+    ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+    slug = request.form.get("slug", "").strip() or re.sub(r"[^a-z0-9]+", "-", ascii_name.lower()).strip("-")
+    if not valid_profile_slug(slug):
+        return mutation_error("Choose an available URL using lowercase letters, numbers, and single hyphens. Start with a letter. Maximum 80 characters.")
+    db = get_db()
+    try:
+        cursor = db.execute("INSERT INTO profiles (name, slug) VALUES (?, ?)", (name, slug))
+        db.commit()
+    except sqlite3.IntegrityError:
+        db.rollback()
+        return mutation_error("That profile URL already exists.", 409)
+    if wants_json_response():
+        return jsonify({"profile": {"id": cursor.lastrowid, "name": name, "slug": slug, "url": url_for("index", profile_slug=slug)}})
+    return redirect(url_for("index", profile_slug=slug))
+
+
+@app.post("/profiles/<int:profile_id>/delete")
+def delete_profile(profile_id: int):
+    db = get_db()
+    if not db.execute("SELECT id FROM profiles WHERE id = ?", (profile_id,)).fetchone():
+        abort(404)
+    if request.form.get("confirm_global") != "1":
+        return mutation_error("Confirm that this profile's tasks will become global.")
+    db.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
+    db.commit()
     return redirect(url_for("index"))
 
 
@@ -1220,7 +1332,7 @@ def create_group():
     if wants_json_response():
         group = db.execute("SELECT id, name FROM groups WHERE name = ?", (name,)).fetchone()
         return jsonify({"group": dict(group), "created": cursor.rowcount == 1})
-    return redirect(url_for("index"))
+    return redirect(dashboard_url())
 
 
 @app.post("/tasks/<int:task_id>/complete")
@@ -1249,7 +1361,7 @@ def complete_task(task_id: int):
     db.commit()
     if wants_json_response():
         return jsonify({"task": task_payload(db, task_id)})
-    return redirect(url_for("index"))
+    return redirect(dashboard_url())
 
 
 @app.post("/tasks/<int:task_id>/move")
@@ -1270,15 +1382,20 @@ def move_task(task_id: int):
     db.commit()
     if wants_json_response():
         return jsonify({"task": task_payload(db, task_id)})
-    return redirect(url_for("index"))
+    return redirect(dashboard_url())
 
 
 @app.post("/tasks/<int:task_id>/settings")
 def update_task_settings(task_id: int):
     db = get_db()
-    task = db.execute("SELECT id, active_months FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    task = db.execute("SELECT id, active_months, profile_id FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if not task:
         abort(404)
+
+    try:
+        profile_id = parse_profile_id(db, request.form["profile_id"]) if "profile_id" in request.form else task["profile_id"]
+    except ValueError as error:
+        return mutation_error(str(error))
 
     try:
         month_values = request.form.getlist("active_months")
@@ -1306,7 +1423,7 @@ def update_task_settings(task_id: int):
         """
         UPDATE tasks
         SET manual_interval_days = ?, due_soon_lead_days = ?, is_paused = ?,
-            reminders_enabled = ?, active_months = ?
+            reminders_enabled = ?, active_months = ?, profile_id = ?
         WHERE id = ?
         """,
         (
@@ -1315,13 +1432,14 @@ def update_task_settings(task_id: int):
             int(request.form.get("is_paused") == "1"),
             int(request.form.get("reminders_enabled") == "1"),
             ",".join(str(month) for month in active_months),
+            profile_id,
             task_id,
         ),
     )
     db.commit()
     if wants_json_response():
         return jsonify({"task": task_payload(db, task_id)})
-    return redirect(url_for("index"))
+    return redirect(dashboard_url())
 
 
 def get_email_action_token(db: sqlite3.Connection, token: str) -> Optional[sqlite3.Row]:
@@ -1462,6 +1580,7 @@ def admin_wipe(slug: str):
     create_backup(db)
     db.execute("DELETE FROM task_completions")
     db.execute("DELETE FROM tasks")
+    db.execute("DELETE FROM profiles")
     db.execute("DELETE FROM groups")
     db.execute("INSERT INTO groups (name) VALUES (?)", ("General",))
     db.commit()
