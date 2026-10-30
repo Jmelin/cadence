@@ -8,6 +8,7 @@ Cadence is a Flask application for recurring tasks. Tasks belong to groups. The 
 - Add tasks to a group.
 - Complete a task with an optional note of 500 characters or fewer.
 - View the completion history and the time since the last completion.
+- View all task completions on the Activity page, newest first, with local dates, times, and notes.
 - Set a task cadence, due-soon lead time, pause state, and reminder state.
 - Use an admin page to delete tasks, erase data, and restore JSON backups.
 - Store data in SQLite.
@@ -192,6 +193,7 @@ An erase creates the `General` group after it deletes all groups, tasks, and com
 - `app.py`: Flask application and SQLite functions.
 - `reminder_worker.py`: Email reminder worker.
 - `templates/index.html`: Main task page.
+- `templates/activity.html`: Activity timeline.
 - `templates/admin.html`: Admin page.
 - `docker-compose.yml`: Container service configuration.
 - `Dockerfile`: Application image definition.

@@ -1118,6 +1118,25 @@ def index():
     )
 
 
+@app.get("/activity")
+def activity():
+    rows = get_db().execute(
+        """
+        SELECT task_completions.completed_at, task_completions.note,
+               tasks.name AS task_name, groups.name AS group_name
+        FROM task_completions
+        JOIN tasks ON tasks.id = task_completions.task_id
+        LEFT JOIN groups ON groups.id = tasks.group_id
+        ORDER BY task_completions.completed_at DESC, task_completions.id DESC
+        """
+    ).fetchall()
+    entries = [
+        {**dict(row), "display_time": format_local_datetime(row["completed_at"])}
+        for row in rows
+    ]
+    return render_template("activity.html", entries=entries)
+
+
 @app.post("/tasks")
 def create_task():
     name = normalize_name(request.form.get("name", ""))

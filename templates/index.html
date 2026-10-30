@@ -11,7 +11,10 @@
     <div class="shell">
       <header class="app-header">
         <a class="brand" href="/">Cadence</a>
-        <a class="button primary" href="#add-task">+ Add task</a>
+        <nav class="header-actions" aria-label="Main navigation">
+          <a class="button" href="{{ url_for('activity') }}">Activity</a>
+          <a class="button primary" href="#add-task">+ Add task</a>
+        </nav>
       </header>
       <main>
         <nav class="summary-grid" aria-label="Filter tasks by status" hidden>
