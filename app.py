@@ -26,6 +26,7 @@ MIN_COMPLETIONS_FOR_CADENCE = 3
 MAX_CADENCE_INTERVAL_DAYS = 3650
 MAX_DUE_SOON_LEAD_DAYS = 365
 MAX_COMPLETION_NOTE_LENGTH = 500
+HISTORY_PAGE_SIZE = 50
 ALL_MONTHS = "1,2,3,4,5,6,7,8,9,10,11,12"
 RESERVED_PROFILE_SLUGS = {"activity", "tasks", "groups", "profiles", "admin", "email-actions", "static", "global"}
 
@@ -145,12 +146,14 @@ def format_local_datetime(timestamp: Optional[str]) -> str:
     return local_time.strftime("%b %d, %Y at %I:%M %p").replace(" 0", " ")
 
 
-def completed_ago(timestamp: Optional[str]) -> str:
+def completed_ago(timestamp: Optional[str], now: Optional[datetime] = None) -> str:
     completed_at = parse_iso_utc(timestamp)
     if not completed_at:
         return "Not completed yet"
 
-    elapsed_days = (datetime.now(timezone.utc) - completed_at).days
+    display_timezone = app.config["DISPLAY_TIMEZONE"]
+    today = (now or datetime.now(timezone.utc)).astimezone(display_timezone).date()
+    elapsed_days = (today - completed_at.astimezone(display_timezone).date()).days
     if elapsed_days <= 0:
         return "Completed today"
     if elapsed_days == 1:
@@ -277,7 +280,7 @@ def completion_note(completion) -> Optional[str]:
 def enrich_task(task: dict, history: list, now: Optional[datetime] = None) -> dict:
     timestamps = [completion_timestamp(completion) for completion in history]
     task["last_completed_display"] = format_local_datetime(task["last_completed_at"])
-    task["completed_ago"] = completed_ago(task["last_completed_at"])
+    task["completed_ago"] = completed_ago(task["last_completed_at"], now)
     task["completion_count"] = len(history)
     history_entries = []
     for index, item in enumerate(history):
@@ -1108,6 +1111,14 @@ def init_db() -> None:
     }
     if "note" not in completion_columns:
         db.execute("ALTER TABLE task_completions ADD COLUMN note TEXT")
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS completions_by_task_time "
+        "ON task_completions (task_id, completed_at DESC, id DESC)"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS completions_by_time "
+        "ON task_completions (completed_at DESC, id DESC)"
+    )
     delivery_columns = {
         row["name"] for row in db.execute("PRAGMA table_info(reminder_deliveries)").fetchall()
     }
@@ -1230,21 +1241,143 @@ def index(profile_slug: Optional[str] = None):
 
 @app.get("/activity")
 def activity():
-    rows = get_db().execute(
-        """
-        SELECT task_completions.completed_at, task_completions.note,
-               tasks.name AS task_name, groups.name AS group_name
-        FROM task_completions
-        JOIN tasks ON tasks.id = task_completions.task_id
+    return history_view()
+
+
+@app.get("/tasks/<int:task_id>/history")
+def task_history(task_id: int):
+    task = task_payload(get_db(), task_id)
+    if task is None:
+        abort(404)
+    return history_view(task)
+
+
+def history_filters(task: Optional[dict]) -> dict:
+    filters = {name: request.args.get(name, "") for name in ("task_id", "group_id", "start", "end")}
+    if task:
+        filters["task_id"] = str(task["id"])
+        filters["group_id"] = ""
+    return filters
+
+
+def completion_page(db: sqlite3.Connection, filters: dict) -> tuple[list[dict], Optional[dict]]:
+    conditions = []
+    parameters = []
+    for name, column in (("task_id", "completions.task_id"), ("group_id", "tasks.group_id")):
+        if filters[name]:
+            if (
+                not filters[name].isascii() or not filters[name].isdigit()
+                or len(filters[name]) > 19 or not 0 < int(filters[name]) <= 2**63 - 1
+            ):
+                raise ValueError("Choose a valid task or area.")
+            conditions.append(f"{column} = ?")
+            parameters.append(int(filters[name]))
+
+    dates = {}
+    for name in ("start", "end"):
+        if filters[name]:
+            try:
+                local_date = datetime.strptime(filters[name], "%Y-%m-%d")
+                if local_date.strftime("%Y-%m-%d") != filters[name]:
+                    raise ValueError
+                dates[name] = local_date
+                boundary = local_date + timedelta(days=1) if name == "end" else local_date
+                utc_boundary = boundary.replace(tzinfo=app.config["DISPLAY_TIMEZONE"]).astimezone(timezone.utc)
+            except (ValueError, OverflowError):
+                raise ValueError("Enter valid dates in YYYY-MM-DD format.") from None
+            conditions.append(f"completions.completed_at {'>=' if name == 'start' else '<'} ?")
+            parameters.append(utc_boundary.isoformat())
+    if "start" in dates and "end" in dates and dates["start"] > dates["end"]:
+        raise ValueError("The start date must be on or before the end date.")
+
+    before_at = request.args.get("before_at", "")
+    before_id = request.args.get("before_id", "")
+    if before_at or before_id:
+        try:
+            timestamp = parse_iso_utc(before_at)
+            if timestamp is None or timestamp.utcoffset() != timedelta(0):
+                raise ValueError
+            if (
+                not before_id.isascii() or not before_id.isdigit()
+                or len(before_id) > 19 or not 0 < int(before_id) <= 2**63 - 1
+            ):
+                raise ValueError
+        except (ValueError, OverflowError):
+            raise ValueError("The history page link is invalid. Return to the newest completions.") from None
+        conditions.append("(completions.completed_at, completions.id) < (?, ?)")
+        parameters.extend((before_at, int(before_id)))
+
+    where_clause = " AND ".join(conditions) or "1 = 1"
+    rows = db.execute(
+        f"""
+        SELECT completions.id, completions.task_id, completions.completed_at, completions.note,
+               tasks.name AS task_name, groups.name AS group_name,
+               (SELECT previous.completed_at FROM task_completions AS previous
+                WHERE previous.task_id = completions.task_id
+                  AND (previous.completed_at, previous.id) < (completions.completed_at, completions.id)
+                ORDER BY previous.completed_at DESC, previous.id DESC LIMIT 1) AS previous_at
+        FROM task_completions AS completions
+        JOIN tasks ON tasks.id = completions.task_id
         LEFT JOIN groups ON groups.id = tasks.group_id
-        ORDER BY task_completions.completed_at DESC, task_completions.id DESC
-        """
+        WHERE {where_clause}
+        ORDER BY completions.completed_at DESC, completions.id DESC
+        LIMIT ?
+        """,
+        (*parameters, HISTORY_PAGE_SIZE + 1),
     ).fetchall()
-    entries = [
-        {**dict(row), "display_time": format_local_datetime(row["completed_at"])}
-        for row in rows
-    ]
-    return render_template("activity.html", entries=entries)
+    entries = []
+    today = datetime.now(timezone.utc).astimezone(app.config["DISPLAY_TIMEZONE"]).date()
+    for row in rows[:HISTORY_PAGE_SIZE]:
+        entry = dict(row)
+        completed_at = parse_iso_utc(row["completed_at"])
+        local_date = completed_at.astimezone(app.config["DISPLAY_TIMEZONE"]).date()
+        entry["date_key"] = local_date.isoformat()
+        if local_date == today:
+            entry["date_heading"] = "Today"
+        elif local_date == today - timedelta(days=1):
+            entry["date_heading"] = "Yesterday"
+        else:
+            entry["date_heading"] = local_date.strftime("%B %d, %Y").replace(" 0", " ")
+        entry["display_time"] = format_local_datetime(row["completed_at"])
+        previous_at = parse_iso_utc(row["previous_at"])
+        if previous_at:
+            interval_days = (completed_at - previous_at).total_seconds() / 86400
+            entry["interval_display"] = (
+                "Less than 1 day since previous completion" if interval_days < 1
+                else f"{format_interval_days(interval_days)} since previous completion"
+            )
+        else:
+            entry["interval_display"] = "First completion"
+        entries.append(entry)
+    cursor = None
+    if len(rows) > HISTORY_PAGE_SIZE:
+        cursor = {"before_at": entries[-1]["completed_at"], "before_id": entries[-1]["id"]}
+    return entries, cursor
+
+
+def history_view(task: Optional[dict] = None):
+    db = get_db()
+    filters = history_filters(task)
+    error = None
+    try:
+        entries, cursor = completion_page(db, filters)
+    except ValueError as exception:
+        error = str(exception)
+        entries, cursor = [], None
+    endpoint = "task_history" if task else "activity"
+    route_values = {"task_id": task["id"]} if task else {}
+    query_values = {name: value for name, value in filters.items() if value and name not in route_values}
+    newest_url = url_for(endpoint, **route_values, **query_values)
+    older_url = url_for(endpoint, **route_values, **query_values, **cursor) if cursor else None
+    return render_template(
+        "activity.html", task=task, entries=entries, filters=filters, error=error,
+        groups=db.execute("SELECT id, name FROM groups ORDER BY name COLLATE NOCASE").fetchall(),
+        tasks=db.execute("SELECT id, name FROM tasks ORDER BY name COLLATE NOCASE").fetchall(),
+        timezone_name=str(app.config["DISPLAY_TIMEZONE"]),
+        newest_url=newest_url, older_url=older_url,
+        is_older_page=bool(request.args.get("before_at") or request.args.get("before_id")),
+        reset_url=url_for(endpoint, **route_values),
+    ), 400 if error else 200
 
 
 @app.post("/tasks")

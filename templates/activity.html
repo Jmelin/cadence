@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Cadence · Activity</title>
+    <title>Cadence · {{ task['name'] ~ ' history' if task else 'Activity' }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}" />
   </head>
   <body>
@@ -12,26 +12,59 @@
         <a class="brand" href="{{ url_for('index') }}">Cadence</a>
         <nav class="header-actions" aria-label="Main navigation">
           <a class="button" href="{{ url_for('index') }}">Tasks</a>
-          <a class="button" href="{{ url_for('activity') }}" aria-current="page">Activity</a>
+          <a class="button" href="{{ url_for('activity') }}"{% if not task %} aria-current="page"{% endif %}>Activity</a>
         </nav>
       </header>
       <main class="activity-page">
-        <h1>Activity</h1>
-        <p class="meta">Task completions, newest first.</p>
+        <h1>{{ task['name'] ~ ' history' if task else 'Activity' }}</h1>
+        {% if task %}
+        <dl class="history-summary">
+          <div><dt>Last completed</dt><dd>{{ task['last_completed_display'] }}</dd><dd class="meta">{{ task['completed_ago'] }}</dd></div>
+          <div><dt>Total completions</dt><dd>{{ task['completion_count'] }}</dd></div>
+          <div><dt>Next due</dt><dd>{{ task['due_summary'] }}</dd>{% if task['cadence']['due_at'] %}<dd class="meta">{{ task['cadence']['due_display'] }}</dd>{% endif %}</div>
+        </dl>
+        {% endif %}
+        <p class="meta">Completions, newest first. All dates and times use {{ timezone_name }}.</p>
+        <form class="history-filters" method="get" action="{{ reset_url }}" aria-label="Filter completion history">
+          {% if not task %}
+          <label>Task<select name="task_id"><option value="">All tasks</option>{% for option in tasks %}<option value="{{ option['id'] }}"{% if filters['task_id'] == option['id']|string %} selected{% endif %}>{{ option['name'] }}</option>{% endfor %}</select></label>
+          <label>Area<select name="group_id"><option value="">All areas</option>{% for group in groups %}<option value="{{ group['id'] }}"{% if filters['group_id'] == group['id']|string %} selected{% endif %}>{{ group['name'] }}</option>{% endfor %}</select></label>
+          {% endif %}
+          <label>From<input type="date" name="start" value="{{ filters['start'] }}" /></label>
+          <label>Through<input type="date" name="end" value="{{ filters['end'] }}" /></label>
+          <button type="submit">Apply filters</button>
+          <a class="button" href="{{ reset_url }}">Clear filters</a>
+        </form>
+        {% if error %}<p class="status" role="alert">{{ error }}</p>{% endif %}
+        {% if is_older_page %}<p><a href="{{ newest_url }}">Newest completions</a></p>{% endif %}
         {% if entries %}
-        <ol class="activity-timeline">
+        {% set dates = namespace(previous=none) %}
           {% for entry in entries %}
+          {% if entry['date_key'] != dates.previous %}
+          {% if not loop.first %}</ol></section>{% endif %}
+          <section class="history-day" aria-labelledby="date-{{ entry['date_key'] }}">
+          <h2 id="date-{{ entry['date_key'] }}">{{ entry['date_heading'] }}</h2>
+          <ol class="activity-timeline">
+          {% set dates.previous = entry['date_key'] %}
+          {% endif %}
           <li class="activity-entry">
             <time datetime="{{ entry['completed_at'] }}">{{ entry['display_time'] }}</time>
-            <h2>{{ entry['task_name'] }}</h2>
+            <h3>{% if task %}Completed{% else %}<a href="{{ url_for('task_history', task_id=entry['task_id']) }}">{{ entry['task_name'] }}</a>{% endif %}</h3>
             <p class="meta">Completed{% if entry['group_name'] %} · {{ entry['group_name'] }}{% endif %}</p>
+            <p class="completion-interval meta">{{ entry['interval_display'] }}</p>
             {% if entry['note'] %}<p class="completion-note">{{ entry['note'] }}</p>{% endif %}
           </li>
           {% endfor %}
-        </ol>
-        {% else %}
-        <section class="empty-state"><h2>No activity yet</h2><p>Complete a task to see it here.</p></section>
+          </ol></section>
+        {% elif not error %}
+        <section class="empty-state">
+          {% if filters['start'] or filters['end'] or (not task and (filters['task_id'] or filters['group_id'])) or is_older_page %}
+          <h2>No matching completions</h2><p>Try another date range or clear the filters.</p>
+          {% elif task %}<h2>No completion history yet</h2><p>Complete this task to record its first completion.</p>
+          {% else %}<h2>No activity yet</h2><p>Complete a task to see it here.</p>{% endif %}
+        </section>
         {% endif %}
+        {% if older_url %}<nav class="history-pagination" aria-label="History pages"><a class="button" href="{{ older_url }}">Older completions</a></nav>{% endif %}
       </main>
     </div>
   </body>
