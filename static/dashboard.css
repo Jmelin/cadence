@@ -49,6 +49,7 @@ button:hover, .button:hover { border-color: var(--accent); }
 .overdue { color: var(--danger); }
 .due_soon { color: var(--warning); }
 .scheduled { color: var(--accent); }
+.off_season { color: var(--muted); }
 .workspace { display: grid; grid-template-columns: minmax(0, 1fr) 285px; gap: 2rem; align-items: start; }
 .toolbar { display: flex; gap: 1rem; justify-content: space-between; align-items: center; padding: 0.75rem 0 1rem; }
 .toolbar h1 { margin: 0; font-size: 1.2rem; letter-spacing: -0.02em; line-height: 1.5; }
@@ -82,6 +83,9 @@ details[open] > summary { color: var(--accent); }
 .settings-form { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; padding: 1rem; margin: 0.5rem 0; background: var(--surface-muted); border-radius: 8px; }
 .settings-form p { grid-column: 1 / -1; }
 .settings-form button { justify-self: start; }
+.active-months { grid-column: 1 / -1; min-width: 0; margin: 0; padding: 0.8rem; border: 1px solid var(--line); border-radius: 8px; }
+.active-months legend { font-size: 0.8rem; font-weight: 600; }
+.month-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 0.6rem; margin-top: 0.8rem; }
 .checkbox { display: flex; align-items: center; gap: 0.4rem; }
 .history-list { padding-left: 1.2rem; color: var(--muted); }
 .history-list li { padding: 0.5rem 0; }

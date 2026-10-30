@@ -18,7 +18,7 @@
       </header>
       <main>
         <nav class="summary-grid" aria-label="Filter tasks by status" hidden>
-          {% for value, label in [('all', 'All tasks'), ('overdue', 'Overdue'), ('due_soon', 'Due soon'), ('scheduled', 'On track'), ('learning', 'Getting started'), ('paused', 'Paused')] %}
+          {% for value, label in [('all', 'All tasks'), ('overdue', 'Overdue'), ('due_soon', 'Due soon'), ('scheduled', 'On track'), ('learning', 'Getting started'), ('off_season', 'Off season'), ('paused', 'Paused')] %}
           <button type="button" class="summary-tile {{ value }}" data-filter="{{ value }}" aria-pressed="{{ 'true' if value == 'all' else 'false' }}"><span>{{ label }}</span><strong data-count="{{ value }}">0</strong></button>
           {% endfor %}
         </nav>
@@ -56,6 +56,14 @@
                             <label>Show as due soon, days before<input type="number" name="due_soon_lead_days" min="1" max="365" placeholder="Automatic" value="{% if task['due_soon_lead_days'] is not none %}{{ task['due_soon_lead_days'] }}{% endif %}" /></label>
                             <label class="checkbox"><input type="checkbox" name="is_paused" value="1" {% if task['is_paused'] %}checked{% endif %} />Pause task</label>
                             <label class="checkbox"><input type="checkbox" name="reminders_enabled" value="1" {% if task['reminders_enabled'] %}checked{% endif %} />Enable reminder emails</label>
+                            <fieldset class="active-months">
+                              <legend>Active months</legend>
+                              <input type="hidden" name="active_months_present" value="1" />
+                              <p class="field-help">Select at least one month. Outside these months, this task is not due and sends no reminder emails. Select all for year-round tasks.</p>
+                              <div class="month-options">
+                                {% for month, name in months %}<label class="checkbox"><input type="checkbox" name="active_months" value="{{ month }}" {% if month in task['active_months'] %}checked{% endif %} />{{ name }}</label>{% endfor %}
+                              </div>
+                            </fieldset>
                             <button type="submit">Save settings</button>
                           </form>
                         </details>
