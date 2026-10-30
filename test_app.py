@@ -1,7 +1,9 @@
 import tempfile
 import unittest
 import sqlite3
+import re
 from datetime import datetime, timedelta, timezone
+from html import unescape
 from pathlib import Path
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
@@ -9,6 +11,7 @@ from zoneinfo import ZoneInfo
 from app import (
     app,
     cadence_insight,
+    completed_ago,
     create_email_action_token,
     export_snapshot,
     format_local_datetime,
@@ -155,9 +158,12 @@ class MutationApiTest(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
         for slug in ("jordan", "alex"):
             html = self.client.get(f"/{slug}").get_data(as_text=True)
-            self.assertIn("History (2)", html)
-            self.assertIn("Done by jordan", html)
-            self.assertIn("Done by alex", html)
+            self.assertIn("View history · 2 completions", html)
+            self.assertIn(f'href="/tasks/{task["id"]}/history"', html)
+            self.assertIn('class="profile-badge">Global</span>', html)
+        history = self.client.get(f'/tasks/{task["id"]}/history').get_data(as_text=True)
+        self.assertIn("Done by jordan", history)
+        self.assertIn("Done by alex", history)
         with app.app_context():
             self.assertEqual(get_db().execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 1)
 
@@ -194,7 +200,8 @@ class MutationApiTest(unittest.TestCase):
         self.assertEqual(self.client.get("/jordan").status_code, 200)
         self.assertEqual(self.post_json(path, {"confirm_global": "1"}).location, "/")
         self.assertEqual(self.client.get("/jordan").status_code, 404)
-        self.assertIn("Keep this history", self.client.get("/alex").get_data(as_text=True))
+        self.assertIn(f'href="/tasks/{task["id"]}/history"', self.client.get("/alex").get_data(as_text=True))
+        self.assertIn("Keep this history", self.client.get(f'/tasks/{task["id"]}/history').get_data(as_text=True))
         with app.app_context():
             restored = task_payload(get_db(), task["id"])
             self.assertIsNone(restored["profile_id"])
@@ -401,6 +408,197 @@ class MutationApiTest(unittest.TestCase):
         response = self.client.get("/activity")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"No activity yet", response.data)
+
+    def test_completed_ago_uses_local_calendar_dates(self):
+        app.config["DISPLAY_TIMEZONE"] = ZoneInfo("America/Chicago")
+        now = datetime(2026, 3, 9, 5, 30, tzinfo=timezone.utc)
+        self.assertEqual(completed_ago("2026-03-09T04:30:00+00:00", now), "Completed 1 day ago")
+        self.assertEqual(completed_ago("2026-03-09T05:00:00+00:00", now), "Completed today")
+        now = datetime(2026, 11, 2, 5, 30, tzinfo=timezone.utc)
+        self.assertEqual(completed_ago("2026-11-01T05:15:00+00:00", now), "Completed today")
+        self.assertEqual(completed_ago(None, now), "Not completed yet")
+
+    def test_task_history_shows_summary_notes_and_only_its_completions(self):
+        task = self.post_json("/tasks", {"name": "Water plants", "manual_interval_days": "7"}).get_json()["task"]
+        other = self.post_json("/tasks", {"name": "Replace filter"}).get_json()["task"]
+        self.post_json(f"/tasks/{task['id']}/complete", {"note": "Watered <fern>\nAnd herbs"})
+        self.post_json(f"/tasks/{other['id']}/complete", {"note": "Not this task"})
+        response = self.client.get(f"/tasks/{task['id']}/history")
+        html = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        for text in ("Water plants history", "Last completed", "Total completions", "Next due", "Today", "First completion", "Watered &lt;fern&gt;\nAnd herbs"):
+            self.assertIn(text, html)
+        self.assertNotIn("Not this task", html)
+        with app.app_context():
+            updated = task_payload(get_db(), task["id"])
+        self.assertIn(updated["last_completed_display"], html)
+        self.assertIn(updated["cadence"]["due_display"], html)
+
+    def test_task_history_empty_and_missing_task(self):
+        task = self.post_json("/tasks", {"name": "Water plants"}).get_json()["task"]
+        response = self.client.get(f"/tasks/{task['id']}/history")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"No completion history yet", response.data)
+        self.assertIn(b"Not completed yet", response.data)
+        self.assertEqual(self.client.get("/tasks/999/history").status_code, 404)
+
+    def test_dashboard_links_to_history_without_rendering_all_notes(self):
+        task = self.post_json("/tasks", {"name": "Water plants"}).get_json()["task"]
+        self.post_json(f"/tasks/{task['id']}/complete", {"note": "Only in history"})
+        response = self.client.get("/")
+        self.assertIn(f'href="/tasks/{task["id"]}/history"'.encode(), response.data)
+        self.assertIn("View history · 1 completion".encode(), response.data)
+        self.assertIn(b"Last completed:", response.data)
+        self.assertNotIn(b"Only in history", response.data)
+        self.assertNotIn(b'class="task-history"', response.data)
+        script = (Path(__file__).parent / "static" / "app.js").read_text()
+        self.assertIn('historyLink.href = `/tasks/${task.id}/history`;', script)
+        self.assertIn("heading.append(name, completed, historyLink);", script)
+        self.assertNotIn('document.createElement("ul")', script[script.index("function taskCard("):script.index("function ensureGroup(")])
+
+    def test_activity_combines_task_area_and_date_filters(self):
+        app.config["DISPLAY_TIMEZONE"] = ZoneInfo("UTC")
+        group = self.post_json("/groups", {"name": "Home"}).get_json()["group"]
+        first = self.post_json("/tasks", {"name": "Water plants", "group_id": group["id"]}).get_json()["task"]
+        second = self.post_json("/tasks", {"name": "Replace filter"}).get_json()["task"]
+        with app.app_context():
+            db = get_db()
+            db.executemany(
+                "INSERT INTO task_completions (task_id, completed_at, note) VALUES (?, ?, ?)",
+                [(first["id"], "2026-01-01T12:00:00+00:00", "Old note"),
+                 (first["id"], "2026-01-08T12:00:00+00:00", "Matching note"),
+                 (second["id"], "2026-01-08T12:00:00+00:00", "Other task note")],
+            )
+            db.commit()
+        filters = {"task_id": first["id"], "group_id": group["id"], "start": "2026-01-08", "end": "2026-01-08"}
+        response = self.client.get("/activity", query_string=filters)
+        html = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Matching note", html)
+        self.assertIn("7 days since previous completion", html)
+        self.assertNotIn("Old note", html)
+        self.assertNotIn("Other task note", html)
+        self.assertIn(f'href="/tasks/{first["id"]}/history"', html)
+        self.assertIn(f'value="{group["id"]}" selected', html)
+        response = self.client.get("/activity", query_string={"group_id": group["id"]})
+        self.assertIn(b"Old note", response.data)
+        self.assertNotIn(b"Other task note", response.data)
+        filters["task_id"] = second["id"]
+        self.assertIn(b"No matching completions", self.client.get("/activity", query_string=filters).data)
+
+    def test_history_date_filters_include_local_days_across_dst(self):
+        app.config["DISPLAY_TIMEZONE"] = ZoneInfo("America/Chicago")
+        task = self.post_json("/tasks", {"name": "Water plants"}).get_json()["task"]
+        for local_date, start, end in (
+            ("2026-03-08", datetime(2026, 3, 8, 6, tzinfo=timezone.utc), datetime(2026, 3, 9, 5, tzinfo=timezone.utc)),
+            ("2026-11-01", datetime(2026, 11, 1, 5, tzinfo=timezone.utc), datetime(2026, 11, 2, 6, tzinfo=timezone.utc)),
+        ):
+            with self.subTest(local_date=local_date):
+                with app.app_context():
+                    db = get_db()
+                    db.execute("DELETE FROM task_completions")
+                    db.executemany(
+                        "INSERT INTO task_completions (task_id, completed_at, note) VALUES (?, ?, ?)",
+                        [(task["id"], timestamp.isoformat(), note) for timestamp, note in (
+                            (start - timedelta(seconds=1), "Before local day"),
+                            (start, "At local midnight"),
+                            (end - timedelta(seconds=1), "Before next midnight"),
+                            (end, "After local day"),
+                        )],
+                    )
+                    db.commit()
+                response = self.client.get(f"/tasks/{task['id']}/history", query_string={"start": local_date, "end": local_date})
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(b"At local midnight", response.data)
+                self.assertIn(b"Before next midnight", response.data)
+                self.assertNotIn(b"Before local day", response.data)
+                self.assertNotIn(b"After local day", response.data)
+
+    def test_history_pagination_handles_ties_and_preserves_filters(self):
+        app.config["DISPLAY_TIMEZONE"] = ZoneInfo("UTC")
+        task = self.post_json("/tasks", {"name": "Water plants"}).get_json()["task"]
+        with app.app_context():
+            db = get_db()
+            db.executemany(
+                "INSERT INTO task_completions (task_id, completed_at, note) VALUES (?, ?, ?)",
+                [(task["id"], "2026-01-08T12:00:00+00:00", f"Completion {number}") for number in range(5)],
+            )
+            db.commit()
+        for path in ("/activity", f"/tasks/{task['id']}/history"):
+            with self.subTest(path=path), patch("app.HISTORY_PAGE_SIZE", 2):
+                response = self.client.get(path, query_string={"task_id": task["id"], "group_id": task["group_id"], "start": "2026-01-08", "end": "2026-01-08"})
+                pages = []
+                for page_number in range(3):
+                    self.assertEqual(response.status_code, 200)
+                    html = response.get_data(as_text=True)
+                    pages.extend(re.findall(r"Completion ([0-4])", html))
+                    older = re.search(r'href="([^"]+)">Older completions</a>', html)
+                    if page_number < 2:
+                        self.assertIsNotNone(older)
+                        link = unescape(older.group(1))
+                        self.assertIn("start=2026-01-08", link)
+                        self.assertIn("end=2026-01-08", link)
+                        if path == "/activity":
+                            self.assertIn(f"task_id={task['id']}", link)
+                            self.assertIn(f"group_id={task['group_id']}", link)
+                        response = self.client.get(link)
+                        self.assertIn(b"Newest completions", response.data)
+                    else:
+                        self.assertIsNone(older)
+                self.assertEqual(pages, ["4", "3", "2", "1", "0"])
+
+    def test_history_rejects_invalid_filters_and_cursors(self):
+        for query in (
+            {"start": "not-a-date"}, {"end": "2026-02-30"},
+            {"start": "2026-02-01", "end": "2026-01-01"},
+            {"task_id": "invalid"}, {"group_id": "-1"},
+            {"task_id": "9999999999999999999"},
+            {"group_id": "9" * 5000},
+            {"before_id": "1"}, {"before_at": "not-a-date", "before_id": "1"},
+            {"before_at": "2026-01-01T00:00:00", "before_id": "1"},
+            {"before_at": "2026-01-01T00:00:00+00:00", "before_id": "0"},
+            {"before_at": "2026-01-01T00:00:00+00:00", "before_id": "9999999999999999999"},
+        ):
+            with self.subTest(query=query):
+                response = self.client.get("/activity", query_string=query)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(b'role="alert"', response.data)
+
+    def test_older_history_does_not_repeat_entries_after_new_completion(self):
+        app.config["DISPLAY_TIMEZONE"] = ZoneInfo("UTC")
+        task = self.post_json("/tasks", {"name": "Water plants"}).get_json()["task"]
+        for number in range(3):
+            self.post_json(f"/tasks/{task['id']}/complete", {"note": f"Original {number}"})
+        with patch("app.HISTORY_PAGE_SIZE", 2):
+            html = self.client.get("/activity").get_data(as_text=True)
+            older = unescape(re.search(r'href="([^"]+)">Older completions</a>', html).group(1))
+            self.post_json(f"/tasks/{task['id']}/complete", {"note": "New arrival"})
+            response = self.client.get(older)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Original 0", response.data)
+        self.assertNotIn(b"Original 1", response.data)
+        self.assertNotIn(b"Original 2", response.data)
+        self.assertNotIn(b"New arrival", response.data)
+
+    def test_history_groups_entries_by_local_date(self):
+        app.config["DISPLAY_TIMEZONE"] = ZoneInfo("America/Chicago")
+        task = self.post_json("/tasks", {"name": "Water plants"}).get_json()["task"]
+        now = datetime(2026, 1, 22, 7, tzinfo=timezone.utc)
+        with app.app_context():
+            db = get_db()
+            db.executemany(
+                "INSERT INTO task_completions (task_id, completed_at) VALUES (?, ?)",
+                [(task["id"], "2026-01-22T06:30:00+00:00"),
+                 (task["id"], "2026-01-22T05:30:00+00:00"),
+                 (task["id"], "2026-01-21T23:00:00+00:00")],
+            )
+            db.commit()
+        with patch("app.datetime", wraps=datetime) as clock:
+            clock.now.return_value = now
+            html = self.client.get("/activity").get_data(as_text=True)
+        self.assertIn(">Today</h2>", html)
+        self.assertIn(">Yesterday</h2>", html)
+        self.assertEqual(html.count('class="history-day"'), 2)
 
     def test_cadence_insight_uses_median_gap_and_due_boundaries(self):
         history = [
@@ -752,12 +950,14 @@ class MutationApiTest(unittest.TestCase):
             with app.app_context():
                 init_db()
                 task = task_payload(get_db(), 1)
+                indexes = {row["name"] for row in get_db().execute("PRAGMA index_list(task_completions)")}
         finally:
             app.config["DATABASE"] = original_database
 
         self.assertEqual(task["name"], "Replace filter")
         self.assertEqual(task["completion_count"], 1)
         self.assertFalse(task["reminders_enabled"])
+        self.assertTrue({"completions_by_task_time", "completions_by_time"}.issubset(indexes))
 
 
 if __name__ == "__main__":

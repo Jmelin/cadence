@@ -50,7 +50,7 @@
                 <ul class="task-list">
                   {% for task in section['tasks'] %}
                   <li class="task-card" data-task-id="{{ task['id'] }}" data-status="{{ task['dashboard_status'] }}" data-name="{{ task['name'] }}" data-due-at="{{ task['cadence']['due_at'] or '' }}" tabindex="-1">
-                    <div class="task-top"><div><h3>{{ task['name'] }}</h3><div class="task-subtitle">{{ task['completed_ago'] }}</div></div><span class="profile-badge">{{ task['profile_name'] or 'Global' }}</span></div>
+                    <div class="task-top"><div><h3>{{ task['name'] }}</h3><div class="task-subtitle">Last completed: {{ task['last_completed_display'] }} · {{ task['completed_ago'] }}</div><a class="history-link" href="{{ url_for('task_history', task_id=task['id']) }}" aria-label="View history for {{ task['name'] }}">View history · {{ task['completion_count'] }} {{ 'completion' if task['completion_count'] == 1 else 'completions' }}</a></div><span class="profile-badge">{{ task['profile_name'] or 'Global' }}</span></div>
                     <div class="task-timing"><p class="cadence {{ task['dashboard_status'] }}">{{ task['due_summary'] }}</p><span class="schedule-summary">{{ task['schedule_summary'] }}</span></div>
                     <form class="quick-complete" action="{{ url_for('complete_task', task_id=task['id']) }}" method="post" data-async-action="complete">{{ form_fields() }}<button type="submit" aria-label="Complete {{ task['name'] }}">✓ Complete</button></form>
                     <details class="task-details"><summary>Details</summary>
@@ -82,7 +82,6 @@
                             <button type="submit">Save settings</button>
                           </form>
                         </details>
-                        <details class="task-history"><summary>History ({{ task['completion_count'] }})</summary>{% if task['completion_history'] %}<ul class="history-list">{% for entry in task['completion_history'] %}<li>{{ entry['display'] }}{% if entry['days_since_previous'] is not none %} · {{ entry['days_since_previous'] }} days since previous{% endif %}{% if entry['note'] %}<div class="completion-note">{{ entry['note'] }}</div>{% endif %}</li>{% endfor %}</ul>{% else %}<p class="meta">No completion history yet.</p>{% endif %}</details>
                       </div>
                     </details>
                   </li>

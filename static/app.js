@@ -187,8 +187,13 @@ function taskCard(task) {
   name.textContent = task.name;
   const completed = document.createElement("div");
   completed.className = "task-subtitle";
-  completed.textContent = task.completed_ago;
-  heading.append(name, completed);
+  completed.textContent = `Last completed: ${task.last_completed_display} · ${task.completed_ago}`;
+  const historyLink = document.createElement("a");
+  historyLink.className = "history-link";
+  historyLink.href = `/tasks/${task.id}/history`;
+  historyLink.setAttribute("aria-label", `View history for ${task.name}`);
+  historyLink.textContent = `View history · ${task.completion_count} ${task.completion_count === 1 ? "completion" : "completions"}`;
+  heading.append(name, completed, historyLink);
   const profileBadge = document.createElement("span");
   profileBadge.className = "profile-badge";
   profileBadge.textContent = task.profile_name || "Global";
@@ -265,33 +270,7 @@ function taskCard(task) {
   actions.append(completeForm, moveForm);
   content.append(actions);
 
-  const history = document.createElement("details");
-  history.className = "task-history";
-  const summary = document.createElement("summary");
-  summary.textContent = `History (${task.completion_count})`;
-  history.append(summary);
-  if (task.completion_history.length) {
-    const list = document.createElement("ul");
-    list.className = "history-list";
-    for (const entry of task.completion_history) {
-      const item = document.createElement("li");
-      item.textContent = entry.display + (entry.days_since_previous === null ? "" : ` (${entry.days_since_previous} days since previous)`);
-      if (entry.note) {
-        const note = document.createElement("div");
-        note.className = "completion-note";
-        note.textContent = entry.note;
-        item.append(note);
-      }
-      list.append(item);
-    }
-    history.append(list);
-  } else {
-    const empty = document.createElement("p");
-    empty.className = "meta";
-    empty.textContent = "No completion history yet.";
-    history.append(empty);
-  }
-  content.append(taskSettings(task), history);
+  content.append(taskSettings(task));
   details.append(detailsSummary, content);
   card.append(details);
   return card;
@@ -338,7 +317,7 @@ function upsertTask(task) {
   const section = taskGroups.querySelector(`[data-group-id="${task.group_id}"]`) || ensureGroup({ id: task.group_id, name: task.group_name });
   const card = taskCard(task);
   const hadFocus = existing?.contains(document.activeElement);
-  for (const selector of [".task-details", ".task-settings", ".task-history"]) {
+  for (const selector of [".task-details", ".task-settings"]) {
     if (existing?.querySelector(selector)?.open) card.querySelector(selector).open = true;
   }
   if (existing && previousSection === section) existing.replaceWith(card);

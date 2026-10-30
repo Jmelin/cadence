@@ -7,8 +7,8 @@ Cadence is a Flask application for recurring tasks. Tasks belong to groups. The 
 - Create task groups, such as Health, Home, and Work.
 - Add tasks to a group.
 - Complete a task with an optional note of 500 characters or fewer.
-- View the completion history and the time since the last completion.
-- View all task completions on the Activity page, newest first, with local dates, times, and notes.
+- Open each task's history to see completion times, notes, and intervals between completions.
+- Filter the Activity page by task, area, and date range.
 - Set a task cadence, due-soon lead time, pause state, and reminder state.
 - Use an admin page to delete tasks, erase data, and restore JSON backups.
 - Store data in SQLite.
@@ -19,7 +19,8 @@ The dashboard shows each task's due status and time since its last completion. S
 
 - Select a status count to filter the tasks.
 - Use the search field to find a task or area.
-- Open **Details** to see exact times, completion history, notes, and schedule settings.
+- Select **View history** on a task card to see its completions and notes.
+- Open **Details** to add a completion note or change schedule settings.
 - Select **Complete** to record a completion. Use **Complete with note** inside Details to include a note.
 
 Tasks appear by area, sorted by name A–Z within each area. Search, filters, and updates without a page reload require JavaScript.
@@ -48,6 +49,21 @@ Deleting a profile keeps its tasks and completion history.
 
 Existing tasks become global when the database upgrades. Backups include profiles and task assignments.
 Restoring an older backup without profiles makes its tasks global. A full wipe also deletes profiles.
+
+### Completion history
+
+Each task card shows the exact last completion time, the time since that completion, and a history link with the completion count.
+The task history page shows its last completion, total completions, and next due date above a dated timeline.
+Each timeline entry includes the completion time, an optional note, and the elapsed interval since the previous completion.
+
+Select **Activity** to see completions across all tasks. Select a task name in the timeline to open its history.
+Use the task and area filters to narrow the Activity timeline. Both timelines support **From** and **Through** date filters.
+The date range includes both selected dates in `USER_TIMEZONE`, including daylight saving time changes.
+Intervals use elapsed time, while **Today**, **Yesterday**, and days-ago labels use local calendar dates.
+
+Each page shows up to 50 completions, newest first. Select **Older completions** to continue or **Newest completions** to return.
+Pagination keeps the selected filters. You can bookmark or share a filtered URL.
+History pages and filters work without JavaScript. History is read-only; logging past completions and correcting entries are not supported.
 
 ### Repeat intervals
 
@@ -229,7 +245,7 @@ An erase creates the `General` group after it deletes all groups, tasks, and com
 - `app.py`: Flask application and SQLite functions.
 - `reminder_worker.py`: Email reminder worker.
 - `templates/index.html`: Main task page.
-- `templates/activity.html`: Activity timeline.
+- `templates/activity.html`: Activity and task history timelines.
 - `templates/admin.html`: Admin page.
 - `docker-compose.yml`: Container service configuration.
 - `Dockerfile`: Application image definition.
